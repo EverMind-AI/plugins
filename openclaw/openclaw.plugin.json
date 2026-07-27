@@ -1,0 +1,22 @@
+{
+  "id": "evermind-ai-everos",
+  "name": "OpenClaw Memory — EverOS",
+  "description": "EverOS-backed cross-session memory for OpenClaw (memory slot).",
+  "version": "3.0.0",
+  "kind": "memory",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "EVEROS_OC_BASE_URL": { "type": "string", "default": "http://127.0.0.1:8000" },
+      "EVEROS_OC_USER_ID": { "type": "string" },
+      "EVEROS_OC_AGENT_ID": { "type": "string", "default": "openclaw" },
+      "EVEROS_OC_QUERY_N": { "type": "number", "default": 1 },
+      "EVEROS_OC_QUERY_MAX_CHARS": { "type": "number", "default": 500 },
+      "EVEROS_OC_START_CMD": { "type": "string", "default": "everos server start" },
+      "EVEROS_OC_EVEROS_DIR": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  // Editor + `npm run typecheck` project that also covers the test suite.
+  // Tests run via tsx and import source with `.js` specifiers (NodeNext), so
+  // they need the same module settings as src. `noEmit`/`rootDir: "."` keep this
+  // config type-check-only — the build still uses tsconfig.json (src -> dist).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test"]
+}

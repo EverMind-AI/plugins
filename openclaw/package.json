@@ -1,0 +1,77 @@
+{
+  "name": "@evermind-ai/openclaw-plugin",
+  "version": "3.0.2",
+  "description": "OpenClaw Memory — EverOS: native memory-slot plugin backed by the local EverOS framework.",
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "memory-slot",
+    "memory",
+    "everos",
+    "ai",
+    "agent"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EverMind-AI/plugins.git",
+    "directory": "openclaw"
+  },
+  "homepage": "https://evermind.ai/",
+  "bugs": {
+    "url": "https://github.com/EverMind-AI/plugins/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "everos-setup": "dist/setup-cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "README_zh.md"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "tsc",
+    "prepublishOnly": "npm run clean && npm run build",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "lint": "biome check src test",
+    "format": "biome check --write src test",
+    "ci": "npm run lint && npm run typecheck && npm run build && npm test"
+  },
+  "openclaw": {
+    "extensions": [
+      "dist/index.js"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.6.10"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.2",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
