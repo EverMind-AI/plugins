@@ -10,7 +10,7 @@ agents**: the same store serves every host, partitioned per app.
 | Plugin | Host | Install | Status |
 |---|---|---|---|
 | [`openclaw/`](./openclaw) | [OpenClaw](https://docs.openclaw.ai) | [`@evermind-ai/openclaw-plugin`](https://www.npmjs.com/package/@evermind-ai/openclaw-plugin) on npm — one-command setup: `npx --yes --package @evermind-ai/openclaw-plugin everos-setup` | ✅ published (3.0.1) |
-| `hermes/` | Hermes Agent | — | 🔬 planned |
+| [`hermes/`](./hermes) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | — | 📐 design complete — build upcoming |
 
 ## What every plugin here shares
 
