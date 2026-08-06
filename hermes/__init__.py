@@ -668,3 +668,12 @@ class EverosMemoryProvider(MemoryProvider):
 
 def register(ctx: Any) -> None:
     ctx.register_memory_provider(EverosMemoryProvider())
+    if hasattr(ctx, "register_cli_command"):  # optional nicety; older hosts lack it
+        from .cli import run_status, setup_cli
+
+        ctx.register_cli_command(
+            "everos",
+            "EverOS memory provider utilities",
+            setup_cli,
+            handler_fn=run_status,
+        )

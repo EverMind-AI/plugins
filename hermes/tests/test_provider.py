@@ -311,3 +311,27 @@ class TestConfigAndSchema(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRegister(unittest.TestCase):
+    def test_register_wires_provider_and_cli(self):
+        calls = {}
+
+        class Ctx:
+            def register_memory_provider(self, p):
+                calls["provider"] = p
+
+            def register_cli_command(self, name, help, setup_fn, handler_fn=None, description=""):
+                calls["cli"] = name
+                calls["setup_fn"] = setup_fn
+
+        mod.register(Ctx())
+        self.assertEqual(calls["provider"].name, "everos")
+        self.assertEqual(calls["cli"], "everos")
+
+    def test_register_tolerates_host_without_cli_api(self):
+        class Ctx:
+            def register_memory_provider(self, p):
+                pass
+
+        mod.register(Ctx())  # must not raise

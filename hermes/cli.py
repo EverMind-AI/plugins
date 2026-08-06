@@ -1,5 +1,10 @@
-"""Optional CLI: ``hermes everos status`` — is the provider configured and is
-EverOS reachable? Read-only; safe to run any time."""
+"""Optional CLI: ``hermes everos [status]`` — is the provider configured and
+is EverOS reachable? Read-only; safe to run any time.
+
+Wired from ``register(ctx)`` via ``ctx.register_cli_command`` (the
+PluginContext API); ``setup_cli`` receives our subparser, ``run_status`` is
+the default handler.
+"""
 from __future__ import annotations
 
 import os
@@ -9,7 +14,7 @@ from . import load_config
 from .client import EverosClient
 
 
-def _status(args: Any) -> None:
+def run_status(args: Any = None) -> None:
     hermes_home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
     cfg = load_config(hermes_home)
     print(f"base_url:  {cfg.base_url}")
@@ -22,8 +27,8 @@ def _status(args: Any) -> None:
         print(f"everos:    unreachable ({err})")
 
 
-def register_cli(subparser: Any) -> None:
-    p = subparser.add_parser("everos", help="EverOS memory provider utilities")
-    sub = p.add_subparsers(dest="everos_cmd")
-    s = sub.add_parser("status", help="show config and EverOS health")
-    s.set_defaults(func=_status)
+def setup_cli(parser: Any) -> None:
+    """Add arguments/sub-subcommands to the ``hermes everos`` subparser."""
+    sub = parser.add_subparsers(dest="everos_cmd")
+    status = sub.add_parser("status", help="show config and EverOS health")
+    status.set_defaults(func=run_status)
