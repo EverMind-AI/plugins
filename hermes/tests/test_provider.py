@@ -92,6 +92,26 @@ class TestLifecycle(unittest.TestCase):
         provider.initialize("x" * 200, hermes_home=self.tmp.name)
         self.assertEqual(len(provider._sid), 128)
 
+    def test_left_running_child_kept_for_shutdown(self):
+        provider = mod.EverosMemoryProvider()
+        real_spawn, real_provision = mod._spawn_daemon, mod.provision
+
+        class DeadChild:
+            def poll(self):
+                return 0
+
+        child = DeadChild()
+        mod._spawn_daemon = lambda fn: fn()
+        mod.provision = lambda *a, **k: provision_mod.ProvisionResult(
+            "failed", "readiness timeout (left running)", child=child
+        )
+        try:
+            provider.initialize("s", hermes_home=self.tmp.name)
+        finally:
+            mod._spawn_daemon = real_spawn
+            mod.provision = real_provision
+        self.assertIs(provider._child, child)
+
     def test_shutdown_flushes(self):
         provider, fake = make_provider(self.tmp.name)
         provider.shutdown()
