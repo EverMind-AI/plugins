@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -89,7 +90,12 @@ class TestLifecycle(unittest.TestCase):
     def test_initialize_stores_and_clips_session_id(self):
         provider, _ = make_provider(self.tmp.name)
         self.assertEqual(provider._sid, "session-1")
-        provider.initialize("x" * 200, hermes_home=self.tmp.name)
+        real_provision = mod.provision  # keep the re-init from real provisioning
+        mod.provision = lambda *a, **k: provision_mod.ProvisionResult("failed", "stub")
+        try:
+            provider.initialize("x" * 200, hermes_home=self.tmp.name)
+        finally:
+            mod.provision = real_provision
         self.assertEqual(len(provider._sid), 128)
 
     def test_left_running_child_kept_for_shutdown(self):
@@ -231,6 +237,35 @@ class TestSyncTurn(unittest.TestCase):
         self.assertIsInstance(adds[0]["messages"][0]["content"], list)  # structured try
         self.assertIsInstance(adds[1]["messages"][0]["content"], str)  # flattened retry
 
+    def test_string_image_url_does_not_crash(self):
+        # some hosts send image_url as a bare string, not the OpenAI dict
+        self.provider.sync_turn(
+            "q",
+            "a",
+            session_id="s",
+            messages=[
+                {"role": "user", "content": [{"type": "image_url", "image_url": "http://x/p.png"}]}
+            ],
+        )
+        adds = self.fake.of("add")
+        self.assertEqual(len(adds), 1)
+        self.assertEqual(adds[0]["messages"][0]["content"][0]["uri"], "http://x/p.png")
+
+    def test_seal_waits_for_inflight_capture(self):
+        mod._spawn_daemon = self.real_spawn  # real background thread here
+        real_add = self.fake.add
+
+        def slow_add(req, timeout_s=None):
+            time.sleep(0.15)
+            return real_add(req, timeout_s)
+
+        self.fake.add = slow_add
+        self.provider.sync_turn("q", "a", session_id="s")
+        self.provider.on_session_end([])
+        kinds = [k for k, _ in self.fake.calls]
+        self.assertIn("add", kinds)
+        self.assertLess(kinds.index("add"), kinds.index("flush"))
+
     def test_transient_error_not_resent(self):
         self.fake.add_errors = [client_mod.EverosError(500, "SYSTEM_ERROR", "boom")]
         self.provider.sync_turn("q", "a", session_id="s")
@@ -321,16 +356,22 @@ class TestConfigAndSchema(unittest.TestCase):
             data = json.loads((Path(home) / "everos.json").read_text())
             self.assertEqual(data["agent_id"], "h2")
 
+    def test_wrong_typed_config_values_do_not_crash(self):
+        cfg = mod.Config(
+            {"base_url": 123, "user_id": 42, "agent_id": None, "start_cmd": 7,
+             "query_max_units": "abc"}
+        )
+        self.assertEqual(cfg.base_url, mod.DEFAULTS["base_url"])
+        self.assertEqual(cfg.agent_id, mod.DEFAULTS["agent_id"])
+        self.assertEqual(cfg.query_max_units, 500)
+        self.assertIsNone(cfg.start_cmd)
+
     def test_config_schema_keys(self):
         keys = {f["key"] for f in mod.EverosMemoryProvider().get_config_schema()}
         self.assertEqual(
             keys,
             {"base_url", "user_id", "agent_id", "query_max_units", "everos_dir", "start_cmd"},
         )
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestRegister(unittest.TestCase):
@@ -355,3 +396,7 @@ class TestRegister(unittest.TestCase):
                 pass
 
         mod.register(Ctx())  # must not raise
+
+
+if __name__ == "__main__":
+    unittest.main()

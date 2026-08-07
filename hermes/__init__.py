@@ -50,7 +50,8 @@ def normalize_base_url(raw: str | None) -> str:
     """Scheme-less values (``localhost:8000``) get ``http://``; a value that
     still doesn't parse falls back to the default (a broken URL would silently
     disable recall, capture AND provisioning at once)."""
-    v = (raw or "").strip() or DEFAULTS["base_url"]
+    v = raw.strip() if isinstance(raw, str) else ""
+    v = v or DEFAULTS["base_url"]
     if not _SCHEME_RE.match(v):
         v = f"http://{v}"
     from urllib.parse import urlparse
@@ -84,14 +85,18 @@ class Config:
     EverOS's own config (mirror principle)."""
 
     def __init__(self, values: dict[str, Any]) -> None:
-        self.base_url: str = normalize_base_url(values.get("base_url"))
-        self.user_id: str | None = (values.get("user_id") or "").strip() or _os_user()
-        self.agent_id: str = (values.get("agent_id") or "").strip() or DEFAULTS["agent_id"]
+        def s(key: str) -> str | None:  # wrong-typed values must not crash startup
+            v = values.get(key)
+            return v.strip() if isinstance(v, str) and v.strip() else None
+
+        self.base_url: str = normalize_base_url(s("base_url"))
+        self.user_id: str | None = s("user_id") or _os_user()
+        self.agent_id: str = s("agent_id") or DEFAULTS["agent_id"]
         self.query_max_units: int = _int_or(
             values.get("query_max_units"), DEFAULTS["query_max_units"]
         )
-        self.everos_dir: str | None = (values.get("everos_dir") or "").strip() or None
-        raw_cmd = (values.get("start_cmd") or "").strip()
+        self.everos_dir: str | None = s("everos_dir")
+        raw_cmd = s("start_cmd")
         self.start_cmd: list[str] | None = split_command(raw_cmd) if raw_cmd else None
 
 
@@ -103,6 +108,8 @@ def _os_user() -> str | None:
 
 
 def _int_or(raw: Any, fallback: int) -> int:
+    if isinstance(raw, bool):
+        return fallback
     try:
         n = int(raw)
         return n if n > 0 else fallback
@@ -286,7 +293,8 @@ def _content_of(m: dict[str, Any]) -> str | list[dict[str, Any]] | None:
             if t:
                 items.append({"type": "text", "text": t})
         elif part.get("type") == "image_url":
-            url = (part.get("image_url") or {}).get("url")
+            iu = part.get("image_url")  # dict per OpenAI spec, but hosts vary
+            url = iu.get("url") if isinstance(iu, dict) else iu
             if isinstance(url, str) and url:
                 dm = re.match(r"^data:([^;,]*)?;base64,(.*)$", url, re.S)
                 if dm:
@@ -397,6 +405,8 @@ class EverosMemoryProvider(MemoryProvider):
         self._project: str = "default"
         self._primary = True  # cron/subagent contexts must not write memory
         self._child = None  # the EverOS process if WE spawned it
+        self._stopped = False
+        self._pending: list[threading.Event] = []  # in-flight capture posts
 
     @property
     def name(self) -> str:
@@ -410,9 +420,13 @@ class EverosMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._sid = _clip_id(session_id)
         self._home = kwargs.get("hermes_home")
+        self._stopped = False
         # Cron system prompts / subagent chatter must not pollute the store.
         self._primary = kwargs.get("agent_context", "primary") == "primary"
-        self._cfg = load_config(self._home)
+        try:
+            self._cfg = load_config(self._home)
+        except Exception:  # a hostile config file must not break agent startup
+            self._cfg = Config({})
         self._project = path_safe_project_id(self._home)
         self._client = EverosClient(self._cfg.base_url)
 
@@ -425,12 +439,16 @@ class EverosMemoryProvider(MemoryProvider):
             # would outlive Hermes holding the OME lock. On a re-init that
             # replaced an older child of ours, stop the old one first.
             if result.child is not None and result.child is not self._child:
+                if self._stopped:  # shutdown raced us — don't adopt an orphan
+                    stop_child(result.child)
+                    return
                 stop_child(self._child)
                 self._child = result.child
 
         _spawn_daemon(_provision)  # initialize returns immediately; fail-open
 
     def shutdown(self) -> None:
+        self._stopped = True
         self._flush("shutdown")
         stop_child(self._child)  # only a server WE spawned; never someone else's
         self._child = None
@@ -477,8 +495,10 @@ class EverosMemoryProvider(MemoryProvider):
             )
             for t in threads:
                 t.start()
+            # One shared deadline — per-thread joins must not stack the budget.
+            deadline = time.monotonic() + RECALL_TIMEOUT_S + 1.0
             for t in threads:
-                t.join(timeout=RECALL_TIMEOUT_S + 1.0)
+                t.join(timeout=max(0.0, deadline - time.monotonic()))
             return render(results["user"], results["agent"])
         except Exception as err:
             logger.warning("[everos] recall failed (fail-open): %s", err)
@@ -500,8 +520,12 @@ class EverosMemoryProvider(MemoryProvider):
         if not sid:
             return
         self._sid = sid
-        raw = messages if messages else pair_messages(user_content, assistant_content)
-        items = to_message_items(raw, self._cfg.user_id, self._cfg.agent_id, _now_ms())
+        try:
+            raw = messages if messages else pair_messages(user_content, assistant_content)
+            items = to_message_items(raw, self._cfg.user_id, self._cfg.agent_id, _now_ms())
+        except Exception as err:  # malformed host messages must not break the turn
+            logger.warning("[everos] capture mapping failed (ignored): %s", err)
+            return
         if not items:
             return
         client, project = self._client, self._project
@@ -530,7 +554,23 @@ class EverosMemoryProvider(MemoryProvider):
             except Exception as err:
                 logger.warning("[everos] capture failed (ignored): %s", err)
 
-        _spawn_daemon(_post)
+        self._post_async(_post)
+
+    def _post_async(self, fn) -> None:
+        """Run a capture post in the background, TRACKED — a seal racing ahead
+        of the final add would flush a buffer that doesn't yet contain the
+        turn it is sealing."""
+        done = threading.Event()
+
+        def wrapper() -> None:
+            try:
+                fn()
+            finally:
+                done.set()
+
+        self._pending = [e for e in self._pending if not e.is_set()][-63:]
+        self._pending.append(done)
+        _spawn_daemon(wrapper)
 
     # -- seal the tail -----------------------------------------------------------
 
@@ -539,6 +579,11 @@ class EverosMemoryProvider(MemoryProvider):
         per-session flush is idempotent, so overlapping seals are benign."""
         if self._client is None or not self._sid:
             return
+        # Let in-flight capture posts land first (bounded) — the seal must
+        # cover the turn that triggered it.
+        deadline = time.monotonic() + 5.0
+        for ev in list(self._pending):
+            ev.wait(timeout=max(0.0, deadline - time.monotonic()))
         try:
             # Seals run host-synchronously (compaction/exit wait on us) — keep
             # the worst-case stall short; turns are already buffered server-side.
@@ -627,7 +672,7 @@ class EverosMemoryProvider(MemoryProvider):
             except Exception as err:
                 logger.warning("[everos] %s add failed (ignored): %s", reason, err)
 
-        _spawn_daemon(_post)
+        self._post_async(_post)
 
     # -- tools & setup -------------------------------------------------------------
 

@@ -108,6 +108,7 @@ def provision(
             stderr=subprocess.STDOUT,
             text=True,
             errors="replace",
+            start_new_session=True,  # a Ctrl-C in the host's terminal must not kill it
         )
     except FileNotFoundError:
         detail = (
@@ -126,13 +127,17 @@ def provision(
     # from the tail; the flag must survive).
     tail: list[str] = [""]
     saw_lock = threading.Event()
+    drained = threading.Event()
 
     def _drain() -> None:
-        assert child.stdout is not None
-        for line in child.stdout:
-            if not saw_lock.is_set() and _LOCK_RE.search(line):
-                saw_lock.set()
-            tail[0] = (tail[0] + line)[-_MAX_OUTPUT_TAIL:]
+        try:
+            assert child.stdout is not None
+            for line in child.stdout:
+                if not saw_lock.is_set() and _LOCK_RE.search(line):
+                    saw_lock.set()
+                tail[0] = (tail[0] + line)[-_MAX_OUTPUT_TAIL:]
+        finally:
+            drained.set()
 
     threading.Thread(target=_drain, daemon=True).start()
 
@@ -142,7 +147,13 @@ def provision(
         client,
         readiness_timeout_s,
         readiness_interval_s,
-        should_abort=lambda: child.poll() is not None and not saw_lock.is_set(),
+        # Only treat a dead child as fatal once its output is fully drained —
+        # the lock-conflict line can arrive AFTER exit (TOCTOU on saw_lock).
+        should_abort=lambda: (
+            child.poll() is not None
+            and drained.wait(timeout=1.0)
+            and not saw_lock.is_set()
+        ),
     )
 
     def last_lines() -> str:
