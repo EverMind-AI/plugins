@@ -154,6 +154,17 @@ class TestMessageMapping(unittest.TestCase):
         )
         self.assertEqual(items[0]["content"], "real question")
 
+    def test_real_timestamps_honored(self):
+        msgs = [
+            {"role": "user", "content": "a", "timestamp": 1700000000},  # seconds
+            {"role": "user", "content": "b", "timestamp": 1700000000123},  # ms
+            {"role": "user", "content": "c"},  # none -> synthetic
+        ]
+        items = mod.to_message_items(msgs, "u", "h", 5000)
+        self.assertEqual(items[0]["timestamp"], 1700000000000)
+        self.assertEqual(items[1]["timestamp"], 1700000000123)
+        self.assertEqual(items[2]["timestamp"], 5002)
+
     def test_pair_fallback(self):
         raw = mod.pair_messages("q", "a")
         self.assertEqual([m["role"] for m in raw], ["user", "assistant"])

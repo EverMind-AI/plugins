@@ -314,6 +314,15 @@ def flatten_item(item: dict[str, Any]) -> dict[str, Any]:
     return {**item, "content": text}
 
 
+def _msg_ts(m: dict[str, Any]) -> int | None:
+    """A message's own timestamp when present. EverOS wants integer
+    MILLISECONDS; a seconds-epoch is upgraded, everything is rounded."""
+    t = m.get("timestamp", m.get("ts"))
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or t <= 0:
+        return None
+    return round(t * 1000) if t < 1e12 else round(t)
+
+
 def to_message_items(
     messages: list[Any], user_id: str | None, agent_id: str, now_ms: int
 ) -> list[dict[str, Any]]:
@@ -345,7 +354,7 @@ def to_message_items(
         item: dict[str, Any] = {
             "sender_id": sender_id,
             "role": out_role,
-            "timestamp": now_ms + i,  # EverOS timestamps are integer MILLISECONDS
+            "timestamp": _msg_ts(m) or (now_ms + i),
             "content": content if content is not None else "",
         }
         if tool_calls:
@@ -411,7 +420,12 @@ class EverosMemoryProvider(MemoryProvider):
 
         def _provision() -> None:
             result = provision(client, cfg.start_cmd, cfg.everos_dir)
-            if result.status == "started":
+            # Keep ANY child we spawned — including "readiness timeout (left
+            # running)" — so shutdown can stop it; an untracked slow starter
+            # would outlive Hermes holding the OME lock. On a re-init that
+            # replaced an older child of ours, stop the old one first.
+            if result.child is not None and result.child is not self._child:
+                stop_child(self._child)
                 self._child = result.child
 
         _spawn_daemon(_provision)  # initialize returns immediately; fail-open
@@ -526,9 +540,11 @@ class EverosMemoryProvider(MemoryProvider):
         if self._client is None or not self._sid:
             return
         try:
+            # Seals run host-synchronously (compaction/exit wait on us) — keep
+            # the worst-case stall short; turns are already buffered server-side.
             self._client.flush(
                 {"session_id": self._sid, "app_id": APP_ID, "project_id": self._project},
-                timeout_s=30.0,
+                timeout_s=10.0,
             )
             logger.info("[everos] flush session=%s reason=%s", self._sid[:8], reason)
         except Exception as err:
