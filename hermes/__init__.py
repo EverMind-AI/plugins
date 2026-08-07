@@ -11,6 +11,7 @@ of the shipped OpenClaw plugin (the proven prior art in ``../openclaw/``).
 from __future__ import annotations
 
 import getpass
+import hashlib
 import json
 import logging
 import re
@@ -44,6 +45,28 @@ DEFAULTS: dict[str, Any] = {
 }
 
 _SCHEME_RE = re.compile(r"^https?://", re.I)
+_OWNER_ID_RE = re.compile(r"^[a-zA-Z0-9_.@+-]+$")
+
+
+def normalize_owner_id(raw: str, fallback: str) -> str:
+    """Return one stable EverOS-safe owner id for capture *and* recall.
+
+    EverOS writes ``sender_id`` into a directory segment, so ``/add`` accepts
+    only ``[a-zA-Z0-9_.@+-]``, rejects ``.``/``..``, and caps the value at 128
+    characters.  Preserve already-valid ids.  Invalid/overlong ids get a
+    readable stem plus a short hash so distinct OS/user names do not collapse
+    onto the same owner after sanitization.
+    """
+    value = raw.strip() or fallback
+    if value not in (".", "..") and len(value) <= SCOPE_MAX and _OWNER_ID_RE.fullmatch(value):
+        return value
+
+    stem = re.sub(r"[^a-zA-Z0-9_.@+-]+", "-", value).strip("-.")
+    if not stem:
+        stem = fallback
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
+    stem = stem[: SCOPE_MAX - len(digest) - 1].rstrip("-.") or fallback
+    return f"{stem}-{digest}"
 
 
 def normalize_base_url(raw: str | None) -> str:
@@ -90,8 +113,13 @@ class Config:
             return v.strip() if isinstance(v, str) and v.strip() else None
 
         self.base_url: str = normalize_base_url(s("base_url"))
-        self.user_id: str | None = s("user_id") or _os_user()
-        self.agent_id: str = s("agent_id") or DEFAULTS["agent_id"]
+        raw_user_id = s("user_id") or _os_user()
+        self.user_id: str | None = (
+            normalize_owner_id(raw_user_id, "user") if raw_user_id else None
+        )
+        self.agent_id: str = normalize_owner_id(
+            s("agent_id") or DEFAULTS["agent_id"], DEFAULTS["agent_id"]
+        )
         self.query_max_units: int = _int_or(
             values.get("query_max_units"), DEFAULTS["query_max_units"]
         )
@@ -169,6 +197,24 @@ def _item_text(item: Any) -> str:
     if isinstance(item, str):
         return item
     if isinstance(item, dict):
+        profile_data = item.get("profile_data")
+        if isinstance(profile_data, dict) and profile_data:
+            return json.dumps(profile_data, ensure_ascii=False, sort_keys=True)
+
+        # Real SearchAgentCaseItem fields.  Keep the useful case narrative and
+        # omit wire metadata (ids, owner/scope fields, scores, timestamps).
+        case_parts: list[str] = []
+        for key, label in (
+            ("task_intent", "Task"),
+            ("approach", "Approach"),
+            ("key_insight", "Key insight"),
+        ):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                case_parts.append(f"{label}: {value.strip()}")
+        if case_parts:
+            return " | ".join(case_parts)
+
         for key in ("content", "text", "summary", "title", "name"):
             v = item.get(key)
             if isinstance(v, str) and v.strip():

@@ -53,6 +53,24 @@ class TestSplitCommand(unittest.TestCase):
         self.assertEqual(mod.split_command('ab"c d"'), ["abc d"])
 
 
+class TestOwnerId(unittest.TestCase):
+    def test_valid_id_is_unchanged(self):
+        self.assertEqual(mod.normalize_owner_id("user+tag@example.com", "user"),
+                         "user+tag@example.com")
+
+    def test_spaces_and_cjk_get_stable_collision_resistant_id(self):
+        first = mod.normalize_owner_id("Kevin 陈", "user")
+        second = mod.normalize_owner_id("Kevin 陈", "user")
+        self.assertEqual(first, second)
+        self.assertRegex(first, r"^[a-zA-Z0-9_.@+-]+$")
+        self.assertLessEqual(len(first), 128)
+        self.assertNotEqual(first, mod.normalize_owner_id("Kevin-陈", "user"))
+
+    def test_reserved_and_overlong_ids_are_safe(self):
+        self.assertNotIn(mod.normalize_owner_id("..", "user"), (".", ".."))
+        self.assertLessEqual(len(mod.normalize_owner_id("a" * 200, "user")), 128)
+
+
 class TestFence(unittest.TestCase):
     def test_neutralize_case_insensitive(self):
         self.assertEqual(
@@ -73,8 +91,19 @@ class TestFence(unittest.TestCase):
 
     def test_render_sections(self):
         block = mod.render(
-            {"profiles": [{"content": "p1"}], "episodes": ["e1"]},
-            {"agent_cases": [{"summary": "c1"}], "agent_skills": [{"title": "s1"}]},
+            {
+                "profiles": [{"profile_data": {"preference": "tea"}, "score": None}],
+                "episodes": [{"summary": "e1"}],
+            },
+            {
+                "agent_cases": [{
+                    "task_intent": "research X",
+                    "approach": "compare sources",
+                    "key_insight": "verify primary docs",
+                    "score": 0.9,
+                }],
+                "agent_skills": [{"content": "s1"}],
+            },
         )
         for label in (
             "Developer profile:",
@@ -83,6 +112,11 @@ class TestFence(unittest.TestCase):
             "Relevant skills:",
         ):
             self.assertIn(label, block)
+        self.assertIn('"preference": "tea"', block)
+        self.assertIn("Task: research X", block)
+        self.assertIn("Approach: compare sources", block)
+        self.assertIn("Key insight: verify primary docs", block)
+        self.assertNotIn('"score"', block)
 
     def test_strip_leading_block_only(self):
         t = f"{mod.MEMORY_OPEN}\nrecalled\n{mod.MEMORY_CLOSE}\nuser text"
