@@ -1,0 +1,56 @@
+identity:
+  author: EverMind-AI
+  name: everos
+  label:
+    en_US: EverOS Memory
+    zh_Hans: EverOS 记忆
+  description:
+    en_US: Persistent memory tools backed by your EverOS deployment.
+    zh_Hans: 由你部署的 EverOS 提供持久化记忆工具。
+  icon: icon.svg
+  tags:
+    - productivity
+credentials_for_provider:
+  base_url:
+    type: text-input
+    required: true
+    label:
+      en_US: EverOS Base URL
+      zh_Hans: EverOS 基础地址
+    placeholder:
+      en_US: https://memory.example.com
+      zh_Hans: https://memory.example.com
+    help:
+      en_US: Server root or gateway prefix. Do not include /api/v2.
+      zh_Hans: 服务器根地址或网关前缀，请勿包含 /api/v2。
+  api_key:
+    type: secret-input
+    required: false
+    label:
+      en_US: Gateway token (optional)
+      zh_Hans: 网关令牌（可选）
+    placeholder:
+      en_US: Token for your authenticated HTTPS gateway
+      zh_Hans: 你的 HTTPS 认证网关令牌
+    help:
+      en_US: Sent as a Bearer token. This is not the EverOS LLM API key.
+      zh_Hans: 以 Bearer token 发送；这不是 EverOS 的 LLM API Key。
+  project_id:
+    type: text-input
+    required: false
+    default: default
+    label:
+      en_US: Project ID
+      zh_Hans: 项目 ID
+    placeholder:
+      en_US: default
+      zh_Hans: default
+    help:
+      en_US: Shared EverOS project scope for both tools.
+      zh_Hans: 两个工具共用的 EverOS 项目隔离范围。
+tools:
+  - tools/search_memory.yaml
+  - tools/add_memory.yaml
+extra:
+  python:
+    source: provider/everos.py
