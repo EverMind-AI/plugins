@@ -55,11 +55,12 @@ def test_secret_files_are_excluded_from_git_and_dify_packages() -> None:
         assert "*.difypkg" in rules
 
 
-def test_runtime_requirements_match_locked_direct_dependencies() -> None:
-    requirements = (ROOT / "requirements.txt").read_text().splitlines()
+def test_runtime_dependencies_use_uv_lock_as_single_source_of_truth() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text()
     lock = (ROOT / "uv.lock").read_text()
-    assert "dify_plugin==0.9.1" in requirements
-    assert "requests==2.34.2" in requirements
+    assert not (ROOT / "requirements.txt").exists()
+    assert '"dify_plugin>=0.9.0,<0.10.0"' in pyproject
+    assert '"requests>=2.32.4,<3.0.0"' in pyproject
     assert 'name = "dify-plugin"\nversion = "0.9.1"' in lock
     assert 'name = "requests"\nversion = "2.34.2"' in lock
 

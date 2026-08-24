@@ -64,3 +64,10 @@ jobs:
           "$RUNNER_TEMP/dify-plugin" plugin package . \
             --output_path "$RUNNER_TEMP/everos.difypkg"
           unzip -Z1 "$RUNNER_TEMP/everos.difypkg"
+          uv export --frozen --format requirements.txt --no-group dev \
+            --no-emit-project --no-hashes --no-header --no-annotate \
+            > "$RUNNER_TEMP/expected-requirements.txt"
+          unzip -p "$RUNNER_TEMP/everos.difypkg" requirements.txt \
+            > "$RUNNER_TEMP/packaged-requirements.txt"
+          diff --unified "$RUNNER_TEMP/expected-requirements.txt" \
+            "$RUNNER_TEMP/packaged-requirements.txt"
