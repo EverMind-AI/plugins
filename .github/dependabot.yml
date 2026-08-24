@@ -18,3 +18,12 @@ updates:
     groups:
       dsh-deps:
         patterns: ["*"]
+
+  # Langfuse replay and fixture verification dependencies
+  - package-ecosystem: pip
+    directory: /langfuse
+    schedule:
+      interval: weekly
+    groups:
+      langfuse-deps:
+        patterns: ["*"]
