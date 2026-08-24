@@ -11,6 +11,7 @@ agents**: the same store serves every host, partitioned per app.
 |---|---|---|---|
 | [`openclaw/`](./openclaw) | [OpenClaw](https://docs.openclaw.ai) | [`@evermind-ai/openclaw-plugin`](https://www.npmjs.com/package/@evermind-ai/openclaw-plugin) on npm — one-command setup: `npx --yes --package @evermind-ai/openclaw-plugin everos-setup` | ✅ published (3.0.1) |
 | [`hermes/`](./hermes) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes plugins install EverMind-AI/plugins/hermes` | 🧪 built — pre-release verification |
+| [`dsh/`](./dsh) | [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) | `dsh plugin --profile web add @evermind-ai/dsh-plugin` | 🧪 built — pre-release verification |
 
 ## What every plugin here shares
 
