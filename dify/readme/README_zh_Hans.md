@@ -74,4 +74,5 @@ dify plugin package ./dify
 
 隐私与网络边界详见 [PRIVACY.md](../PRIVACY.md)。源码位于
 <https://github.com/EverMind-AI/plugins/tree/main/dify>，问题请提交到
-<https://github.com/EverMind-AI/plugins/issues>。
+<https://github.com/EverMind-AI/plugins/issues>，也可发送邮件至
+<contact@evermind.ai>。

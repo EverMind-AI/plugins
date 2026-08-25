@@ -140,6 +140,7 @@ Read [PRIVACY.md](./PRIVACY.md) before deployment. In summary:
 
 - Source: <https://github.com/EverMind-AI/plugins/tree/main/dify>
 - Issues: <https://github.com/EverMind-AI/plugins/issues>
+- Email: <contact@evermind.ai>
 - EverOS: <https://github.com/EverMind-AI/EverOS>
 
 Licensed under [Apache-2.0](https://github.com/EverMind-AI/plugins/blob/main/LICENSE).
