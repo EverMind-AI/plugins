@@ -35,6 +35,9 @@ resource:
 plugins:
   tools:
     - provider/everos_cloud.yaml
+network:
+  domains:
+    - api.evermind.ai
 meta:
   version: 0.0.1
   minimum_dify_version: "1.14.2"
@@ -47,4 +50,5 @@ meta:
     entrypoint: main
 privacy: PRIVACY.md
 repo: https://github.com/EverMind-AI/plugins
+contact: contact@evermind.ai
 verified: false
