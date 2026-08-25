@@ -1,0 +1,33 @@
+[project]
+name = "everos-cloud-dify-plugin"
+version = "0.0.1"
+description = "Dify tools for EverOS Cloud persistent memory"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "dify_plugin>=0.9.0,<0.10.0",
+    "requests>=2.32.4,<3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyyaml>=6.0.2,<7.0.0",
+    "pytest>=9.0.3,<10.0.0",
+    "ruff>=0.12.0,<1.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
