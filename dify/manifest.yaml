@@ -1,13 +1,13 @@
 version: 0.0.1
 type: plugin
-author: EverMind-AI
+author: evermind-ai
 name: everos
 label:
-  en_US: EverOS Memory
-  zh_Hans: EverOS 记忆
+  en_US: EverOS Self-Hosted
+  zh_Hans: EverOS 本地版
 description:
-  en_US: Search and store persistent agent memory with EverOS.
-  zh_Hans: 使用 EverOS 搜索和存储持久化 Agent 记忆。
+  en_US: Search and store persistent agent memory with your self-hosted EverOS deployment.
+  zh_Hans: 使用你本地部署的 EverOS 搜索和存储持久化 Agent 记忆。
 icon: icon.svg
 created_at: 2026-08-20T00:00:00Z
 resource:

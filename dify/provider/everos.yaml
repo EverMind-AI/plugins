@@ -1,12 +1,12 @@
 identity:
-  author: EverMind-AI
+  author: evermind-ai
   name: everos
   label:
-    en_US: EverOS Memory
-    zh_Hans: EverOS 记忆
+    en_US: EverOS Self-Hosted
+    zh_Hans: EverOS 本地版
   description:
-    en_US: Persistent memory tools backed by your EverOS deployment.
-    zh_Hans: 由你部署的 EverOS 提供持久化记忆工具。
+    en_US: Persistent memory tools backed by your self-hosted EverOS deployment.
+    zh_Hans: 由你本地部署的 EverOS 提供持久化记忆工具。
   icon: icon.svg
   tags:
     - productivity
@@ -15,14 +15,14 @@ credentials_for_provider:
     type: text-input
     required: true
     label:
-      en_US: EverOS Base URL
-      zh_Hans: EverOS 基础地址
+      en_US: Self-hosted EverOS URL
+      zh_Hans: 本地部署的 EverOS 地址
     placeholder:
       en_US: https://memory.example.com
       zh_Hans: https://memory.example.com
     help:
-      en_US: Server root or gateway prefix. Do not include /api/v2.
-      zh_Hans: 服务器根地址或网关前缀，请勿包含 /api/v2。
+      en_US: Your EverOS server root or gateway prefix. Do not include /api/v2.
+      zh_Hans: 你部署的 EverOS 服务根地址或网关前缀，请勿包含 /api/v2。
   api_key:
     type: secret-input
     required: false
