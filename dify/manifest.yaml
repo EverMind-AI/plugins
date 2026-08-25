@@ -47,4 +47,5 @@ meta:
     entrypoint: main
 privacy: PRIVACY.md
 repo: https://github.com/EverMind-AI/plugins
+contact: contact@evermind.ai
 verified: false
