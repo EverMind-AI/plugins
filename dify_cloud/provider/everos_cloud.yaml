@@ -1,0 +1,44 @@
+identity:
+  author: evermind-ai
+  name: everos_cloud
+  label:
+    en_US: EverOS Cloud
+    zh_Hans: EverOS 云端版
+  description:
+    en_US: Persistent memory tools backed by your EverOS Cloud account.
+    zh_Hans: 由你的 EverOS 云端账户提供持久化记忆工具。
+  icon: icon.svg
+  tags:
+    - productivity
+credentials_for_provider:
+  base_url:
+    type: text-input
+    required: true
+    default: https://api.evermind.ai
+    label:
+      en_US: EverOS Cloud API URL
+      zh_Hans: EverOS 云端 API 地址
+    placeholder:
+      en_US: https://api.evermind.ai
+      zh_Hans: https://api.evermind.ai
+    help:
+      en_US: EverOS Cloud service root. Keep the default unless your account uses another approved endpoint; do not include /api/v2.
+      zh_Hans: EverOS 云端服务根地址。除非账户使用其他获批端点，否则保留默认值；请勿包含 /api/v2。
+  api_key:
+    type: secret-input
+    required: true
+    label:
+      en_US: EverOS Cloud API Key
+      zh_Hans: EverOS 云端 API Key
+    placeholder:
+      en_US: Your EverOS Cloud API Key
+      zh_Hans: 你的 EverOS 云端 API Key
+    help:
+      en_US: Sent only to the configured URL as a Bearer token. This is not an LLM provider key.
+      zh_Hans: 仅作为 Bearer token 发送到上述地址；这不是大模型服务商的 Key。
+tools:
+  - tools/search_memory.yaml
+  - tools/add_memory.yaml
+extra:
+  python:
+    source: provider/everos_cloud.py

@@ -1,0 +1,50 @@
+version: 0.0.1
+type: plugin
+author: evermind-ai
+name: everos_cloud
+label:
+  en_US: EverOS Cloud
+  zh_Hans: EverOS 云端版
+description:
+  en_US: Search and store persistent agent memory through EverOS Cloud.
+  zh_Hans: 通过 EverOS 云端服务搜索和存储持久化 Agent 记忆。
+icon: icon.svg
+created_at: 2026-08-25T00:00:00Z
+resource:
+  memory: 268435456
+  permission:
+    model:
+      enabled: false
+      llm: false
+      text_embedding: false
+      rerank: false
+      tts: false
+      speech2text: false
+      moderation: false
+    tool:
+      enabled: false
+    node:
+      enabled: false
+    endpoint:
+      enabled: false
+    app:
+      enabled: false
+    storage:
+      enabled: false
+      size: 1048576
+plugins:
+  tools:
+    - provider/everos_cloud.yaml
+meta:
+  version: 0.0.1
+  minimum_dify_version: "1.14.2"
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main
+privacy: PRIVACY.md
+repo: https://github.com/EverMind-AI/plugins
+verified: false
