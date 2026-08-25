@@ -1,0 +1,52 @@
+identity:
+  name: add_memory
+  author: evermind-ai
+  label:
+    en_US: Add EverOS Cloud memory
+    zh_Hans: 写入 EverOS 云端记忆
+description:
+  human:
+    en_US: Store one completed user/assistant turn in EverOS Cloud and finalize memory extraction.
+    zh_Hans: 在 EverOS 云端存储一轮完整的用户与助手消息，并完成记忆提取。
+  llm: Store the completed user and assistant turn in persistent EverOS memory. Do not store API keys, credentials, or other secrets.
+parameters:
+  - name: user_message
+    type: string
+    required: true
+    label:
+      en_US: User message
+      zh_Hans: 用户消息
+    human_description:
+      en_US: The user's message from the completed turn.
+      zh_Hans: 当前已完成轮次中的用户消息。
+    llm_description: Exact user message from the completed turn.
+    form: llm
+  - name: assistant_message
+    type: string
+    required: true
+    label:
+      en_US: Assistant message
+      zh_Hans: 助手消息
+    human_description:
+      en_US: The assistant's final response from the completed turn.
+      zh_Hans: 当前已完成轮次中的助手最终回答。
+    llm_description: Exact final assistant response from the completed turn.
+    form: llm
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+    stored:
+      type: boolean
+    flushed:
+      type: boolean
+    add:
+      type: object
+    flush:
+      type: object
+    error:
+      type: string
+extra:
+  python:
+    source: tools/add_memory.py
