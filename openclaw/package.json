@@ -1,6 +1,6 @@
 {
   "name": "@evermind-ai/openclaw-plugin",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "OpenClaw Memory — EverOS: native memory-slot plugin backed by the local EverOS framework.",
   "keywords": [
     "openclaw",
@@ -40,28 +40,40 @@
     "README_zh.md"
   ],
   "engines": {
-    "node": ">=22.19"
+    "node": ">=22.22.3"
   },
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc",
     "prepublishOnly": "npm run clean && npm run build",
     "typecheck": "tsc -p tsconfig.test.json",
+    "typecheck:sdk": "tsc -p tsconfig.sdk.json",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "lint": "biome check src test",
     "format": "biome check --write src test",
-    "ci": "npm run lint && npm run typecheck && npm run build && npm test"
+    "ci": "npm run lint && npm run typecheck && npm run typecheck:sdk && npm run build && npm test"
   },
   "openclaw": {
     "extensions": [
       "dist/index.js"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.8.1"
+    },
+    "compat": {
+      "pluginApi": ">=2026.8.1",
+      "minGatewayVersion": "2026.8.1"
+    },
+    "build": {
+      "openclawVersion": "2026.8.1",
+      "pluginSdkVersion": "2026.8.1"
+    }
   },
   "publishConfig": {
     "access": "public"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.6.10"
+    "openclaw": ">=2026.8.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -71,6 +83,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
     "@types/node": "^22.10.0",
+    "openclaw": "2026.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

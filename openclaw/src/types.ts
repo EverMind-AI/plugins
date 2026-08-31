@@ -1,5 +1,5 @@
 /**
- * Wire types for the EverOS memory API (`/api/v1/memory/*`).
+ * Wire types for the EverOS memory API (`/api/v2/memory/*`).
  *
  * These mirror the EverOS request/response DTOs exactly — we forward to
  * EverOS and invent nothing. Source of truth: the EverOS repo
@@ -53,7 +53,7 @@ export interface ErrorBody {
   path?: string;
 }
 
-// ─── /api/v1/memory/add ──────────────────────────────────────────────────
+// ─── /api/v2/memory/add ──────────────────────────────────────────────────
 
 export interface AddRequest {
   session_id: string;
@@ -69,7 +69,7 @@ export interface AddResponse {
   status: "accumulated" | "extracted";
 }
 
-// ─── /api/v1/memory/search ─────────────────────────────────────────────────
+// ─── /api/v2/memory/search ─────────────────────────────────────────────────
 
 export type SearchMethod = "keyword" | "vector" | "hybrid" | "agentic";
 
@@ -105,7 +105,7 @@ export interface SearchResponse {
   unprocessed_messages: unknown[];
 }
 
-// ─── /api/v1/memory/flush ──────────────────────────────────────────────────
+// ─── /api/v2/memory/flush ──────────────────────────────────────────────────
 
 export interface FlushRequest {
   session_id: string;

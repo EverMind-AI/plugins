@@ -1,10 +1,14 @@
 /**
- * Hook handlers (Phase 3): recall / capture / flush.
+ * Hook handlers (Phase 3): inbound media / recall / capture / flush.
  *
  * recall  (before_prompt_build): build a query from the current prompt (fallback:
  *   recent user messages), run two owner-split `/search` calls (user track +
  *   agent track), inject the result via `prependContext`. ~5s cap, fail-open.
- * capture (agent_end): map the turn's messages to EverOS `/add`, fire-and-forget.
+ * media   (message_received): stage OpenClaw 2.0 attachment facts until the
+ *   matching `agent_end` event. Raw video is intentionally excluded because
+ *   EverOS's public ContentItem DTO has no video type; any transcript/description
+ *   OpenClaw already put in the turn is still captured as text.
+ * capture (agent_end): map the turn's messages + staged media to EverOS `/add`.
  * flush   (session_end) + reset (before_reset): seal the session's buffered tail
  *   on a deliberate ending. Both call one deduped `doFlush`, so `/new` — which
  *   fires before_reset AND session_end — extracts once, not twice. (Mid-conversation
@@ -20,13 +24,19 @@
  * role/content/timestamp tolerantly and never throw out of a handler.
  */
 
+import { basename, extname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 import { assertScopeId, type EverosClient, EverosError } from "./everos.js";
 import type {
   AgentEndEvent,
   BeforePromptBuildEvent,
   BeforePromptBuildResult,
   BeforeResetEvent,
+  MessageReceivedEvent,
   PluginHookAgentContext,
+  PluginHookMediaFact,
+  PluginHookMessageContext,
   PluginHookSessionContext,
   SessionEndEvent,
 } from "./openclaw-types.js";
@@ -40,8 +50,8 @@ export interface HandlerDeps {
   agentId: string;
   /** Constant app id (e.g. "openclaw"). */
   appId: string;
-  /** This plugin's host id (e.g. "evermind-ai-everos") — used in the grant-nudge hint. */
-  pluginId: string;
+  /** Explicit OpenClaw `hooks.allowConversationAccess` grant. */
+  conversationAccessGranted: boolean;
   queryN: number;
   queryMaxChars: number;
   /** Per-search cap; recall fail-opens past it. Default 5000. */
@@ -248,40 +258,120 @@ function senderFor(role: string | undefined, deps: HandlerDeps): { sender_id: st
 
 // ── multimodal content mapping ───────────────────────────────────────────────
 
-/** Map an image MIME type to the `ext` EverOS uses for parser dispatch. */
+/** Map a MIME type to the `ext` EverOS uses for parser dispatch. */
 function extFromMime(mime: string): string | undefined {
-  const m = /^image\/([a-z0-9.+-]+)$/i.exec(mime.trim());
-  if (!m) return undefined;
-  const sub = m[1]!.toLowerCase();
-  if (sub === "jpeg") return "jpg";
-  if (sub === "svg+xml") return "svg";
-  return sub;
+  const normalized = mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const aliases: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/svg+xml": "svg",
+    "audio/mpeg": "mp3",
+    "audio/x-wav": "wav",
+    "audio/mp4": "m4a",
+    "application/pdf": "pdf",
+    "text/html": "html",
+    "message/rfc822": "eml",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  };
+  if (aliases[normalized]) return aliases[normalized];
+  const m = /^(?:image|audio)\/([a-z0-9.+-]+)$/i.exec(normalized);
+  return m?.[1]?.replace(/^x-/, "").toLowerCase();
+}
+
+function cleanExt(value: string | undefined): string | undefined {
+  const ext = value?.replace(/^\./, "").trim().toLowerCase();
+  return ext && /^[a-z0-9]+$/.test(ext) ? ext : undefined;
+}
+
+function itemTypeFor(
+  kind: PluginHookMediaFact["kind"],
+  mime: string | undefined,
+  ext: string | undefined,
+): ContentItem["type"] | undefined {
+  if (kind === "video" || mime?.toLowerCase().startsWith("video/")) return undefined;
+  if (kind === "image" || kind === "sticker" || mime?.toLowerCase().startsWith("image/")) return "image";
+  if (kind === "audio" || mime?.toLowerCase().startsWith("audio/")) return "audio";
+  if (ext === "pdf" || mime?.toLowerCase() === "application/pdf") return "pdf";
+  if (ext === "html" || ext === "htm" || mime?.toLowerCase() === "text/html") return "html";
+  if (ext === "eml" || ext === "msg" || mime?.toLowerCase() === "message/rfc822") return "email";
+  if (kind === "document" || ["doc", "docx", "ppt", "pptx", "xls", "xlsx"].includes(ext ?? "")) return "doc";
+  return undefined;
+}
+
+function payloadName(uri: string, fallbackPath?: string): string | undefined {
+  if (fallbackPath) return basename(fallbackPath) || undefined;
+  try {
+    const parsed = new URL(uri);
+    return basename(parsed.protocol === "file:" ? fileURLToPath(parsed) : parsed.pathname) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Convert one staged OpenClaw 2.0 media fact into an EverOS content item. */
+export function mediaFactToContentItem(fact: PluginHookMediaFact): ContentItem | undefined {
+  const mime = typeof fact.contentType === "string" ? fact.contentType : undefined;
+  // Prefer OpenClaw's staged local path: it is the canonical, locally usable
+  // artifact. Fall back to the source URL only when no staged path exists.
+  const source = typeof fact.path === "string" && fact.path ? fact.path : fact.url;
+  if (!source) return undefined;
+
+  let uri: string;
+  if (/^(?:https?|file):\/\//i.test(source)) {
+    uri = source;
+  } else if (isAbsolute(source)) {
+    uri = pathToFileURL(source).href;
+  } else if (typeof fact.workspaceDir === "string" && fact.workspaceDir) {
+    uri = pathToFileURL(resolve(fact.workspaceDir, source)).href;
+  } else {
+    return undefined;
+  }
+
+  const pathExt = (() => {
+    try {
+      const parsed = new URL(uri);
+      return cleanExt(extname(parsed.protocol === "file:" ? fileURLToPath(parsed) : parsed.pathname));
+    } catch {
+      return undefined;
+    }
+  })();
+  const ext = pathExt ?? extFromMime(mime ?? "");
+  const type = itemTypeFor(fact.kind, mime, ext);
+  if (!type) return undefined;
+  const name = payloadName(uri, fact.path);
+  return { type, uri, ...(ext ? { ext } : {}), ...(name ? { name } : {}) };
 }
 
 /**
- * Map one OpenClaw image part to an EverOS ContentItem, or undefined if it carries no
- * forwardable payload. Handles the core `{data, mimeType}` inline-base64 shape and the
- * Codex `{url}` variant (a `data:` URI → base64, otherwise an http(s) uri).
+ * Map one supported OpenClaw content part to an EverOS ContentItem, or undefined
+ * if it carries no forwardable payload. Handles `{data, mimeType}` inline-base64
+ * and `{url}` (a `data:` URI → base64, otherwise a URI).
  */
-function mapImagePart(p: Record<string, unknown>): ContentItem | undefined {
-  if (typeof p.data === "string" && p.data) {
-    const ext = typeof p.mimeType === "string" ? extFromMime(p.mimeType) : undefined;
-    return { type: "image", base64: p.data, ...(ext ? { ext } : {}) };
+function mapContentPart(type: ContentItem["type"], p: Record<string, unknown>): ContentItem | undefined {
+  const mime = typeof p.mimeType === "string" ? p.mimeType : typeof p.contentType === "string" ? p.contentType : "";
+  const ext = cleanExt(typeof p.ext === "string" ? p.ext : undefined) ?? extFromMime(mime);
+  const encoded = typeof p.data === "string" && p.data ? p.data : typeof p.base64 === "string" ? p.base64 : undefined;
+  if (encoded) {
+    return { type, base64: encoded, ...(ext ? { ext } : {}) };
   }
   if (typeof p.url === "string" && p.url) {
     const dm = /^data:([^;,]*)?;base64,(.*)$/s.exec(p.url);
     if (dm) {
-      const ext = dm[1] ? extFromMime(dm[1]) : undefined;
-      return { type: "image", base64: dm[2] ?? "", ...(ext ? { ext } : {}) };
+      const dataExt = dm[1] ? extFromMime(dm[1]) : ext;
+      return { type, base64: dm[2] ?? "", ...(dataExt ? { ext: dataExt } : {}) };
     }
-    return { type: "image", uri: p.url };
+    return { type, uri: p.url, ...(ext ? { ext } : {}) };
   }
   return undefined;
 }
 
 /**
  * Build an EverOS message `content` from an OpenClaw message: a plain string for the
- * common text-only case, or a structured `ContentItem[]` when images are present. Our
+ * common text-only case, or a structured `ContentItem[]` when media are present. Our
  * own injected `<everos_memory>` block is stripped from text (self-ingestion guard);
  * `thinking`/`toolCall` parts have no EverOS home and are dropped. Returns undefined
  * when nothing capturable remains.
@@ -296,25 +386,25 @@ function msgContent(m: unknown): string | ContentItem[] | undefined {
   }
   if (!Array.isArray(c)) return undefined;
   const items: ContentItem[] = [];
-  let hasImage = false;
+  let hasMedia = false;
   for (const part of c) {
     const p = asRecord(part);
     if (!p) continue;
     if (p.type === "text" && typeof p.text === "string") {
       const t = stripInjectedMemory(p.text);
       if (t) items.push({ type: "text", text: t });
-    } else if (p.type === "image") {
-      const img = mapImagePart(p);
-      if (img) {
-        items.push(img);
-        hasImage = true;
+    } else if (["image", "audio", "doc", "pdf", "html", "email"].includes(String(p.type))) {
+      const media = mapContentPart(p.type as ContentItem["type"], p);
+      if (media) {
+        items.push(media);
+        hasMedia = true;
       }
     }
     // thinking / toolCall / unknown parts → dropped (no EverOS equivalent)
   }
   if (items.length === 0) return undefined;
   // Text-only → collapse to a plain string (the common case; keeps content simple).
-  if (!hasImage) return items.map((it) => it.text ?? "").join(" ") || undefined;
+  if (!hasMedia) return items.map((it) => it.text ?? "").join(" ") || undefined;
   return items;
 }
 
@@ -373,7 +463,7 @@ export function toMessageItems(messages: unknown[], deps: HandlerDeps, nowMs: nu
     if (!sender) return;
     const r = asRecord(m);
 
-    // Text/image content — our injected recall block is stripped inside msgContent.
+    // Text/media content — our injected recall block is stripped inside msgContent.
     let content = msgContent(m);
     // Assistant tool calls → tool_calls[]; a tool result carries its originating call id.
     const tool_calls = sender.role === "assistant" ? extractToolCalls(m) : undefined;
@@ -387,7 +477,7 @@ export function toMessageItems(messages: unknown[], deps: HandlerDeps, nowMs: nu
     if (role === "toolResult" && r?.isError === true) content = markToolError(content);
 
     // Emit if there's ANY payload: content OR tool calls. (A pure tool-call assistant turn
-    // has no text/image content but must still be captured.)
+    // has no text/media content but must still be captured.)
     if (content === undefined && !tool_calls) return;
 
     out.push({
@@ -401,9 +491,49 @@ export function toMessageItems(messages: unknown[], deps: HandlerDeps, nowMs: nu
   return out;
 }
 
+function contentItemKey(item: ContentItem): string {
+  return `${item.type}\0${item.uri ?? ""}\0${item.base64 ?? ""}\0${item.name ?? ""}`;
+}
+
+/** Attach staged inbound media to the last user message without duplicating media already present there. */
+export function appendInboundMedia(
+  items: MessageItem[],
+  media: ContentItem[],
+  deps: Pick<HandlerDeps, "userId">,
+  nowMs: number,
+): void {
+  if (media.length === 0 || !deps.userId) return;
+  const target = [...items].reverse().find((item) => item.role === "user");
+  if (!target) {
+    items.push({ sender_id: deps.userId, role: "user", timestamp: nowMs, content: media });
+    return;
+  }
+
+  const existing: ContentItem[] =
+    typeof target.content === "string"
+      ? target.content
+        ? [{ type: "text", text: target.content }]
+        : []
+      : [...target.content];
+  const keys = new Set(existing.map(contentItemKey));
+  const existingImage = existing.some((item) => item.type === "image");
+  for (const item of media) {
+    // Images already embedded in the OpenClaw transcript are authoritative; the
+    // canonical media fact for the same image may use a different URI/base64 form.
+    if (item.type === "image" && existingImage) continue;
+    const key = contentItemKey(item);
+    if (!keys.has(key)) {
+      keys.add(key);
+      existing.push(item);
+    }
+  }
+  target.content = existing;
+}
+
 // ── the handlers ─────────────────────────────────────────────────────────────
 
 export interface Handlers {
+  media(event: MessageReceivedEvent, ctx: PluginHookMessageContext): void;
   recall(event: BeforePromptBuildEvent, ctx: PluginHookAgentContext): Promise<BeforePromptBuildResult | void>;
   capture(event: AgentEndEvent, ctx: PluginHookAgentContext): Promise<void>;
   // session_end's ctx is the narrower session context — the real host sends no
@@ -438,15 +568,28 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   // sessions sharing this one gateway don't keep prematurely flushing each other.
   let activeSessionId: string | undefined;
   const seenSessions = new Set<string>();
+  // OpenClaw 2.0 exposes staged attachment facts on `message_received`, while
+  // `agent_end` remains the durable turn boundary. Keep a bounded, per-run buffer
+  // and merge it into the matching user message at capture time.
+  const pendingMedia = new Map<string, ContentItem[]>();
 
-  // Detect the "conversation access blocked" trap. When
-  // plugins.entries.<id>.hooks.allowConversationAccess is not true, the host strips
-  // the agent_end hook, so `capture` is NEVER called — while `recall` (a
-  // prompt-injection hook, not gated) keeps firing. Recalls piling up with zero
-  // captures ⇒ we're reading memory but silently saving nothing. Warn exactly once.
-  let recalls = 0;
-  let captures = 0;
-  let warnedNoCapture = false;
+  const mediaKey = (event: { runId?: string; sessionKey?: string }, ctx: { runId?: string; sessionKey?: string }) => {
+    const runId = event.runId ?? ctx.runId;
+    if (runId) return `run:${runId}`;
+    const sessionKey = event.sessionKey ?? ctx.sessionKey;
+    return sessionKey ? `session:${sessionKey}` : undefined;
+  };
+
+  const takePendingMedia = (event: AgentEndEvent, ctx: PluginHookAgentContext): ContentItem[] => {
+    const primary = mediaKey(event, ctx);
+    const fallback = ctx.sessionKey ? `session:${ctx.sessionKey}` : undefined;
+    const collected: ContentItem[] = [];
+    for (const key of new Set([primary, fallback].filter((value): value is string => Boolean(value)))) {
+      collected.push(...(pendingMedia.get(key) ?? []));
+      pendingMedia.delete(key);
+    }
+    return collected;
+  };
 
   // EverOS caps session_id at 128 chars; clip deterministically so capture + flush
   // still agree on the id and an over-long id doesn't 422 the whole /add.
@@ -525,8 +668,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
    * neither session_end nor before_reset fires — the old session's last topic
    * would sit unextracted in EverOS's buffer forever).
    *
-   * Called from `recall` only (it fires at turn START, in order, and — unlike
-   * capture — is never gated by allowConversationAccess). The flush is
+   * Called from `recall` only (it fires at turn START, in order). In OpenClaw
+   * 2.0 both recall and capture require allowConversationAccess. The flush is
    * fire-and-forget so recall is never blocked on the prior session's seal, and it
    * uses the `switchFlushed` dedup (NOT `flushed`, with `retireScope: false`), so
    * sealing a still-live session neither blocks nor discards the scope of its
@@ -567,21 +710,41 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   }
 
   return {
+    media(event, ctx) {
+      // message_received itself is not covered by OpenClaw's conversation-hook
+      // gate, so independently honor the exact same explicit user grant here.
+      if (!deps.conversationAccessGranted) return;
+      const key = mediaKey(event, ctx);
+      if (!key) return;
+      // A remote worker can emit message_received before its attachment has been
+      // staged on the gateway. Its original path is not locally readable, so only
+      // preserve an original HTTP(S) URL in that case. Inline/staged media may
+      // still appear in agent_end.messages and is handled there independently.
+      const facts = event.mediaStagingPending
+        ? (event.originalMedia ?? []).filter((fact) => typeof fact.url === "string" && /^https?:\/\//i.test(fact.url))
+        : (event.media ?? []);
+      if (facts.length === 0) return;
+      const mapped = facts.map(mediaFactToContentItem).filter((item): item is ContentItem => Boolean(item));
+      if (mapped.length === 0) return;
+      const previous = pendingMedia.get(key) ?? [];
+      const keys = new Set(previous.map(contentItemKey));
+      for (const item of mapped) {
+        const itemKey = contentItemKey(item);
+        if (!keys.has(itemKey)) {
+          keys.add(itemKey);
+          previous.push(item);
+        }
+      }
+      pendingMedia.delete(key);
+      pendingMedia.set(key, previous);
+      if (pendingMedia.size > 1024) {
+        const oldest = pendingMedia.keys().next().value;
+        if (oldest !== undefined) pendingMedia.delete(oldest);
+      }
+    },
+
     async recall(event, ctx) {
       try {
-        recalls++;
-        // Threshold 5, not 2: recall fires at turn START and capture at turn END,
-        // so N concurrent/overlapping turns show N recalls before the first capture
-        // even when the grant is fine. 5 keeps the nudge while making a false
-        // positive need 5 simultaneous in-flight turns right after boot.
-        if (recalls >= 5 && captures === 0 && !warnedNoCapture) {
-          warnedNoCapture = true;
-          deps.logger?.warn(
-            `[everos] recall is running but capture has never fired — reading memory but saving nothing. ` +
-              `The agent_end hook is likely blocked; enable it with: ` +
-              `openclaw config set 'plugins.entries.${deps.pluginId}.hooks.allowConversationAccess' true (then restart the gateway).`,
-          );
-        }
         // Seal a prior session abandoned by a client-side `/new` (see
         // noteActiveSession). Runs BEFORE any early return so even a blank-prompt
         // turn registers the switch. project_id doubles as the prior session's
@@ -618,12 +781,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
 
     async capture(event, ctx) {
-      captures++; // capture being CALLED at all ⇒ agent_end is registered (grant present)
       try {
         const sessionId = sessionIdOf(ctx);
         const messages = (event.messages ?? []) as unknown[];
-        if (!sessionId || messages.length === 0) return;
+        const media = takePendingMedia(event, ctx);
+        if (!sessionId || (messages.length === 0 && media.length === 0)) return;
         const items = toMessageItems(messages, deps, Date.now());
+        appendInboundMedia(items, media, deps, Date.now());
         if (items.length === 0) return;
         const project_id = projectIdFrom(ctx);
         // Remember scope for the eventual flush. delete THEN set: `Map.set` on an
@@ -640,9 +804,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
           if (oldest !== undefined && oldest !== sessionId) sessionProject.delete(oldest);
         }
 
-        // Post one ≤500-message batch. If it carries structured (image) content and the
-        // server DEFINITIVELY rejects the media — 415 (EverOS MultimodalError) or 422
-        // (an older DTO that can't parse image items) — retry THAT batch text-only so
+        // Post one ≤500-message batch. If it carries structured media and the
+        // server DEFINITIVELY rejects it — 415 (unsupported format), 422 (an older
+        // DTO), or 503 CAPABILITY_UNAVAILABLE (multimodal extra/provider missing) —
+        // retry THAT batch text-only so
         // the turn is never lost. Those statuses are pre-commit validation rejections,
         // so the structured attempt landed nothing and the retry can't duplicate it.
         // Any OTHER failure (5xx, network drop, lost response) is transient: flattening
@@ -653,7 +818,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
           try {
             await deps.client.add({ session_id: sessionId, app_id: deps.appId, project_id, messages: batch });
           } catch (err) {
-            const mediaRejected = err instanceof EverosError && (err.status === 415 || err.status === 422);
+            const mediaRejected =
+              err instanceof EverosError &&
+              (err.status === 415 ||
+                err.status === 422 ||
+                (err.status === 503 && err.code === "CAPABILITY_UNAVAILABLE"));
             if (!mediaRejected || !batch.some((it) => Array.isArray(it.content))) throw err;
             deps.logger?.warn(`[everos] multimodal add rejected (${(err as Error).message}); retrying text-only`);
             await deps.client.add({

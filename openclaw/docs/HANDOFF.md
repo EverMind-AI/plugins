@@ -1,7 +1,7 @@
 # EverOS ⇄ OpenClaw Plugin — Handover Document
 
-_As of 2026-08-07. For whoever maintains it. The plugin is shipped, published,
-and source-verified. This document is the bridge: the design's reasoning in
+_Updated 2026-08-31. For whoever maintains it. The published release is 3.0.2;
+the source tree is the tested 3.0.3 OpenClaw 2.0 compatibility candidate. This document is the bridge: the design's reasoning in
 brief, where the code lives, how to test it, and how to cut the next release._
 
 > Companion to `everos openclaw plugin.md` (the design spec) and to
@@ -12,8 +12,9 @@ brief, where the code lives, how to test it, and how to cut the next release._
 ## 1. Status snapshot
 
 - **Shipped and published.** `@evermind-ai/openclaw-plugin` is live on npm
-  (latest **3.0.2**); source lives in the `EverMind-AI/plugins` monorepo under
-  `openclaw/`. **135 tests** (3 live), green on `npm run ci`. Verified
+  (published **3.0.2**); source lives in the `EverMind-AI/plugins` monorepo under
+  `openclaw/`. The **3.0.3 candidate has 144 tests** (3 live), plus an exact
+  OpenClaw 2026.8.1 SDK typecheck, green on `npm run ci`. The older release was verified
   end-to-end against a real EverOS through two full wipe/reinstall passes
   (fresh-download Tier-1, wipe-and-rebuild Tier-2).
 - **The design doc is the intent; this is the as-built.** The shipped code went
@@ -29,15 +30,16 @@ brief, where the code lives, how to test it, and how to cut the next release._
   **OME single-instance lock handoff race** on restart (the old process dying as
   a new one spawns). The plugin already self-heals onto a lock holder that is
   healthy (`provision.ts`), but watch both.
-- **One known wart:** `package.json` is `3.0.2` but `openclaw.plugin.json` is
-  still `3.0.0` (README prose says `v3.0.0` too). Harmless — the manifest
-  version is informational — but reconcile the three on the next release.
+- **3.0.3 compatibility delta:** versions are aligned; OpenClaw 2.0's
+  `message_received` staged-media hook captures image/audio/document facts;
+  the client uses EverOS's canonical `/api/v2`; and CI pins the real 2026.8.1
+  SDK so the local type shim can no longer hide drift.
 
 ## 2. The design's reasoning, in one page
 
 **What it is:** a native OpenClaw plugin — one thin TypeScript client
 (`EverosClient`, `everos.ts`, whose header literally reads *"Mirrors EverOS;
-invents nothing"*) plus four hook handlers, over EverOS's local HTTP API. It
+invents nothing"*) plus five hook handlers, over EverOS's local HTTP API. It
 **claims OpenClaw's exclusive `memory` slot** (displacing the stock
 `memory-core`) and captures **both EverOS tracks** — the developer's profile +
 episodes (user track) and the agent's distilled cases + skills (agent track),
@@ -74,7 +76,8 @@ which requires EverOS running `mode = "agent"`. The loop the host drives:
   doc:** `provision.ts` has **no** auto-install branch (no `installCommand`) —
   as shipped it only *detects and starts*; the "install it if missing" idea from
   the design doc lives in the `everos-setup` CLI, not in the request path.
-- **Four hooks + one safety net.** `before_prompt_build`→recall,
+- **Five hooks + one safety net.** `message_received`→stage supported media,
+  `before_prompt_build`→recall,
   `agent_end`→capture (consent-gated), `session_end`→flush,
   `before_reset`→reset. `doFlush` dedups so `/new` (which fires *both*
   `before_reset` and `session_end`) seals only **once**. The session-switch
@@ -83,10 +86,10 @@ which requires EverOS running `mode = "agent"`. The loop the host drives:
   **separate** `switchFlushed` set with `retireScope: false`, so a switch-seal
   never suppresses that session's genuine later end-flush.
 - **Capture the full trajectory** (`toMessageItems`): user/assistant/tool text,
-  **images** (inline base64 + ext), and **tool calls/results** chained by
+  **images/audio/documents** (inline content or staged URI), and **tool calls/results** chained by
   `tool_call_id` (an orphan tool row is dropped — EverOS 5xxs it). Chunked into
   ordered ≤500-message batches (`ADD_MAX_MESSAGES` — EverOS's Pydantic cap).
-  Multimodal **image retry fires ONLY on 415/422** (pre-commit validation
+  Multimodal fallback fires only on **415/422 or 503 CAPABILITY_UNAVAILABLE** (pre-commit validation
   rejections that landed nothing — safe to re-send text-only); a transient 5xx
   is **not** downgraded (it might have committed; a mutated resend would
   double-write).
@@ -97,11 +100,11 @@ which requires EverOS running `mode = "agent"`. The loop the host drives:
   brackets (`neutralizeFenceTokens`). `stripInjectedMemory` — anchored at
   position 0, stripping consecutive leading blocks — runs before capture so
   EverOS never re-ingests its own recall output as user input.
-- **Consent gate + nudge.** Capture needs
+- **Consent gate.** OpenClaw 2.0 requires
   `plugins.entries.evermind-ai-everos.hooks.allowConversationAccess = true`;
-  without it the host strips `agent_end` and only recall fires. The nudge warns
-  **exactly once** after 5 captureless recalls (threshold 5, not 2, so
-  in-flight turns right after boot don't false-positive).
+  without it the host blocks both `before_prompt_build` recall and `agent_end`
+  capture. The plugin checks this at registration, warns immediately, and only
+  registers `message_received` when the same explicit grant is present.
 - **Query construction is plugin-side** (mirror principle): the query is the
   latest N user messages (`queryN`, default 1), head-clipped to `queryMaxChars`
   (default 500), current prompt always kept and never truncated by history.
@@ -126,7 +129,7 @@ EverMind-AI/plugins                     the monorepo
     ├── openclaw.plugin.json            manifest: id evermind-ai-everos, kind:"memory", 7-key configSchema
     ├── package.json                    npm metadata; bin everos-setup; files=[dist, manifest, README, README_zh]
     ├── src/                            index · register · handlers · everos · config · provision · setup · setup-cli · types (+ openclaw-types · openclaw-sdk.d.ts SDK shims)
-    ├── test/                           5 files, 135 tests (3 live)
+    ├── test/                           5 runtime suites + SDK compile check; 144 tests (3 live)
     ├── README.md / README_zh.md        setup + config + troubleshooting (en + zh)
     └── dist/                           compiled output (published; git-ignored)
 ```
@@ -148,19 +151,19 @@ each kind of edit goes:
    description, register })` from `openclaw/plugin-sdk/plugin-entry`; also
    re-exports the client as a standalone library surface. Rarely touched.
 2. **`register.ts`** (`@internal`, runtime-free so it unit-tests directly) —
-   claims the slot (`registerMemoryCapability({})`), wires the four hooks (only
+   claims the slot (`registerMemoryCapability({})`), wires the five hooks (only
    `before_prompt_build` gets `{ timeoutMs: 5000 }`), registers the
    `"everos-server"` provision service (with concurrent-stop handling so a
    shutdown mid-boot doesn't orphan EverOS and hold the OME lock), and resolves
    the developer `user_id`. Change hook wiring here.
 3. **`handlers.ts`** — the hook brain, and where ~90% of behavior changes go:
    `buildRecallQuery`, `render` (+ the fence hardening), `toMessageItems`
-   (turn → EverOS DTO, incl. tool-call chaining and image forwarding), `doFlush`
+   (turn → EverOS DTO, incl. tool-call chaining and staged-media forwarding), `doFlush`
    (+ the `flushed`/`switchFlushed` dedup sets and the 2048-entry
    `sessionProject` LRU), `noteActiveSession` (the safety net), and the
-   capture-nudge.
+   OpenClaw 2.0 media buffer.
 4. **`everos.ts`** — the HTTP client: four endpoints
-   (`/health`, `/api/v1/memory/{add,search,flush}`), the `{request_id, data}`
+   (`/health`, `/api/v2/memory/{add,search,flush}`), the `{request_id, data}`
    envelope unwrap, `EverosError` (`status`, `code`, `path`; client codes
    `NETWORK_ERROR`/`BAD_RESPONSE`/`INVALID_SCOPE_ID`/`INVALID_OWNER`),
    `assertScopeId` (the `PathSafeId` regex), and the exactly-one-owner rule on
@@ -173,15 +176,16 @@ each kind of edit goes:
    (`already-running`/`started`/`failed`), `portFromUrl` (throw-proof, falls
    back to `"8000"`), and the OME-lock self-heal (recognizes `EngineLockHeldError`
    and rides a healthy lock holder without killing it).
-7. **`setup.ts` / `setup-cli.ts`** — the `everos-setup` npx installer: consent
-   grant prompt, venv start-command wiring, gateway restart + health poll, and
-   the version-floor warn (`MIN_OPENCLAW = 2026.6.10` — warn, never block).
+7. **`setup.ts` / `setup-cli.ts`** — the `everos-setup` npx installer: separate
+   memory-capability and conversation-access consent, venv start-command wiring,
+   gateway restart + health poll, and an enforced OpenClaw 2.0 version floor
+   (`MIN_OPENCLAW = 2026.8.1`).
 8. **`types.ts`** — the EverOS wire DTOs (source of truth: the EverOS repo).
    Keep in lockstep with the server.
 
 ## 5. How to test
 
-**Unit (132 of 135 — no EverOS, no gateway): `npm test`.** Pure `node:test`
+**Unit (141 of 144 — no EverOS, no gateway): `npm test`.** Pure `node:test`
 with fakes (`fakeFetch`, `spyClient`, `fakeChild`, `fakeIo`). The contract
 points *are* the test list — treat them as the invariants to preserve:
 
@@ -197,17 +201,19 @@ points *are* the test list — treat them as the invariants to preserve:
   inert); `stripInjectedMemory` leading-block behavior (whole block, dangling
   opener, mid-message quote preserved, back-to-back blocks all stripped).
 - **Capture:** turn mapping (roles → sender ids, tool-call chaining, orphan-row
-  drop, image forward, `[tool error]` marking, ms-timestamp normalization);
-  ≤500 ordered chunks; image-retry on 415/422 only, **not** on a transient 503.
+  drop, staged image/audio/document forwarding, raw-video exclusion,
+  `[tool error]` marking, ms-timestamp normalization); ≤500 ordered chunks;
+  media fallback on 415/422/CAPABILITY_UNAVAILABLE, **not** on a transient 503.
 - **Seal:** `/new` fires both hooks → flushes **once**; session-switch net seals
   the *prior* session with its captured scope; a switch-sealed session that
   continues still gets its real end-flush; the LRU regression (a live
   re-captured session is not FIFO-evicted).
 - **Provision:** state machine, forced agent-mode env, OME-lock self-heal
   across the exit-before-close stdio race, genuine-crash surfacing.
-- **Register + everos-setup:** exactly one empty-capability claim, four hooks
+- **Register + everos-setup:** exactly one empty-capability claim, five hooks
   (only recall with a timeout), one `"everos-server"` service; arg parsing,
-  version-floor warn, consent gate defaults (non-interactive ⇒ no grant).
+  enforced version floor, explicit install-capability acceptance, and the
+  separate conversation-access grant.
 - **All of it under a dead server:** no exception escapes any hook.
 
 **Live (3 tests + manual) — backend-receipts discipline.** The 3 `LIVE:` tests
@@ -225,9 +231,9 @@ gotcha #1 from §1, not a regression).
 
 ## 6. How to release
 
-The 3.0.2 release, as actually done — repeat it:
+For the 3.0.3 candidate and later releases:
 
-1. **Green `npm run ci`** (`lint → typecheck → build → 135 tests`) on the exact
+1. **Green `npm run ci`** (`lint → local typecheck → exact 2.0 SDK typecheck → build → 144 tests`) on the exact
    publish tree. If a `LIVE:` test flakes, restart EverOS fresh before
    diagnosing (gotcha #1) — don't publish on a red suite.
 2. **Bump the version in all three places, in lockstep:** `package.json`,

@@ -2,10 +2,11 @@
  * @evermind-ai/openclaw-plugin — OpenClaw Memory — EverOS.
  *
  * OpenClaw plugin entry: claims the exclusive `memory` slot and wires the
- * lifecycle hooks to EverOS (recall on `before_prompt_build`, capture on
- * `agent_end`, flush on `session_end`/`before_reset`) plus detect-then-provision
- * via a registered service. Everything is fail-open. The wiring itself lives in
- * `./register.js` (openclaw-runtime-free, so it can be unit-tested directly).
+ * media/lifecycle hooks to EverOS (staged attachments on `message_received`,
+ * recall on `before_prompt_build`, capture on `agent_end`, flush on
+ * `session_end`/`before_reset`) plus detect-then-provision via a registered
+ * service. Everything is fail-open. The wiring itself lives in `./register.js`
+ * (openclaw-runtime-free, so it can be unit-tested directly).
  *
  * Also re-exports the EverOS client + helpers as a library surface (used by the
  * integration tests, and usable standalone).

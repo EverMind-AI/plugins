@@ -2,7 +2,7 @@
  * EverOS HTTP client (Phase 1).
  *
  * Thin, typed wrapper over the local EverOS framework's memory API
- * (`/api/v1/memory/*`). Zero runtime dependencies — uses the global `fetch`.
+ * (`/api/v2/memory/*`). Zero runtime dependencies — uses the global `fetch`.
  * Mirrors EverOS; invents nothing.
  *
  * Envelope contract:
@@ -149,7 +149,7 @@ export function createEverosClient(options: EverosClientOptions): EverosClient {
     async add(req, opts) {
       if (req.app_id !== undefined) assertScopeId(req.app_id, "app_id");
       if (req.project_id !== undefined) assertScopeId(req.project_id, "project_id");
-      return enveloped<AddResponse>("/api/v1/memory/add", req, opts);
+      return enveloped<AddResponse>("/api/v2/memory/add", req, opts);
     },
 
     async search(req, opts) {
@@ -160,13 +160,13 @@ export function createEverosClient(options: EverosClientOptions): EverosClient {
       }
       if (req.app_id !== undefined) assertScopeId(req.app_id, "app_id");
       if (req.project_id !== undefined) assertScopeId(req.project_id, "project_id");
-      return enveloped<SearchResponse>("/api/v1/memory/search", req, opts);
+      return enveloped<SearchResponse>("/api/v2/memory/search", req, opts);
     },
 
     async flush(req, opts) {
       if (req.app_id !== undefined) assertScopeId(req.app_id, "app_id");
       if (req.project_id !== undefined) assertScopeId(req.project_id, "project_id");
-      return enveloped<FlushResponse>("/api/v1/memory/flush", req, opts);
+      return enveloped<FlushResponse>("/api/v2/memory/flush", req, opts);
     },
   };
 }

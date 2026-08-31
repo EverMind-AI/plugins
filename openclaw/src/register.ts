@@ -45,7 +45,7 @@ export function resolveUserId(
 
 /**
  * Wire the plugin into the host: claim the memory slot (empty capability),
- * register the four lifecycle hooks, and register the detect-then-provision
+ * register the OpenClaw 2.0 media + lifecycle hooks, and register the detect-then-provision
  * service. Nothing runs on its own — provisioning fires only when the host calls
  * the registered service's `start()`.
  *
@@ -64,12 +64,37 @@ export function register(api: OpenClawPluginApi, deps: { provisionFn?: typeof pr
     );
   }
   const client = createEverosClient({ baseUrl: cfg.baseUrl });
+  const hookPermissions = (() => {
+    const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+      typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+    const plugins = asRecord(asRecord(api.config)?.plugins);
+    const entries = asRecord(plugins?.entries);
+    const entry = asRecord(entries?.[api.id]);
+    const hooks = asRecord(entry?.hooks);
+    return {
+      conversationAccessGranted: hooks?.allowConversationAccess === true,
+      promptInjectionAllowed: hooks?.allowPromptInjection !== false,
+    };
+  })();
+  const { conversationAccessGranted, promptInjectionAllowed } = hookPermissions;
+  if (!conversationAccessGranted) {
+    api.logger?.warn?.(
+      `[everos] memory recall and capture are disabled until ` +
+        `plugins.entries.${api.id}.hooks.allowConversationAccess is explicitly set to true and the gateway restarts.`,
+    );
+  }
+  if (conversationAccessGranted && !promptInjectionAllowed) {
+    api.logger?.warn?.(
+      `[everos] memory capture is enabled, but recall is disabled because ` +
+        `plugins.entries.${api.id}.hooks.allowPromptInjection is false. Remove that override or set it to true, then restart the gateway.`,
+    );
+  }
   const handlers = createHandlers({
     client,
     userId,
     agentId: cfg.agentId,
     appId: APP_ID,
-    pluginId: api.id,
+    conversationAccessGranted,
     queryN: cfg.queryN,
     queryMaxChars: cfg.queryMaxChars,
     logger: api.logger,
@@ -91,6 +116,9 @@ export function register(api: OpenClawPluginApi, deps: { provisionFn?: typeof pr
   // Everything is routed through our hooks + the EverOS HTTP API instead.
   api.registerMemoryCapability({});
 
+  // OpenClaw 2.0's message_received hook is not covered by the conversation
+  // hook gate, so register it only after independently verifying the same grant.
+  if (conversationAccessGranted) api.on("message_received", handlers.media);
   // Recall → inject (per-turn, ~5s host budget; our cap is the real bound).
   api.on("before_prompt_build", handlers.recall, { timeoutMs: 5000 });
   // Capture → /add (fire-and-forget). Needs hooks.allowConversationAccess=true.

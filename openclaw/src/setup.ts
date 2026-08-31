@@ -4,7 +4,8 @@
  * Runs the OFFICIAL host installer and the handful of config steps the README
  * otherwise walks through by hand:
  *
- *   1. `openclaw plugins install <spec>` (host-native; handles the memory-slot swap)
+ *   1. explicit capability consent, then `openclaw plugins install <spec>`
+ *      (host-native; handles the memory-slot swap)
  *   2. the conversation-access grant — ALWAYS consent-gated: prompted when
  *      interactive, defaults to NO otherwise (OpenClaw made this opt-in on
  *      purpose; a silent flip would abuse the consent gate)
@@ -36,6 +37,8 @@ export interface SetupArgs {
   spec: string;
   /** Grant decision from flags; undefined → prompt (or safe default). */
   grant: boolean | undefined;
+  /** Accept OpenClaw's declared-capability install gate. */
+  acceptCapabilities: boolean | undefined;
   everosDir: string | undefined;
   startCmd: string | undefined;
   baseUrl: string;
@@ -46,14 +49,8 @@ export interface SetupArgs {
 export const PLUGIN_ID = "evermind-ai-everos";
 const DEFAULT_SPEC = "@evermind-ai/openclaw-plugin";
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
-/**
- * Tested floor (the declared peer range). Below it we WARN and continue rather
- * than block: registry archaeology shows the whole memory-slot API surface
- * exists back to at least 2026.5.7, but we have only VALIDATED ≥ 2026.6.10 —
- * so "may work, not promised" is the honest message, and blocking would
- * contradict the plugin's fail-open philosophy.
- */
-const MIN_OPENCLAW: readonly [number, number, number] = [2026, 6, 10];
+/** Tested and install-enforced OpenClaw 2.0 host/plugin-API floor. */
+const MIN_OPENCLAW: readonly [number, number, number] = [2026, 8, 1];
 
 /** Pull a `YYYY.M.P` version out of `openclaw --version` output, if present. */
 export function parseOpenclawVersion(output: string): [number, number, number] | undefined {
@@ -80,8 +77,12 @@ Usage: everos-setup [spec] [options]
                        (default: ${DEFAULT_SPEC})
 
 Options:
-  --grant              Grant conversation access without prompting
-  --no-grant           Skip the grant (plugin recalls but never saves)
+  --accept-capabilities
+                       Allow this plugin to claim OpenClaw's exclusive memory
+                       capability (required by OpenClaw 2.0's installer)
+  --grant              Grant conversation access without prompting; also implies
+                       --accept-capabilities
+  --no-grant           Skip the grant (memory recall and capture stay disabled)
   --everos-dir <dir>   EverOS checkout — sets EVEROS_OC_EVEROS_DIR and, when
                        <dir>/.venv/bin/everos exists, a quoted EVEROS_OC_START_CMD
   --start-cmd <cmd>    Explicit EVEROS_OC_START_CMD (overrides the venv guess)
@@ -93,6 +94,7 @@ export function parseArgs(argv: string[]): SetupArgs | { error: string } {
   const out: SetupArgs = {
     spec: DEFAULT_SPEC,
     grant: undefined,
+    acceptCapabilities: undefined,
     everosDir: undefined,
     startCmd: undefined,
     baseUrl: DEFAULT_BASE_URL,
@@ -107,6 +109,7 @@ export function parseArgs(argv: string[]): SetupArgs | { error: string } {
       return v === undefined ? { error: `error: ${a} requires a value` } : v;
     };
     if (a === "--grant") out.grant = true;
+    else if (a === "--accept-capabilities") out.acceptCapabilities = true;
     else if (a === "--no-grant") out.grant = false;
     else if (a === "--no-restart") out.restart = false;
     else if (a === "-h" || a === "--help") out.help = true;
@@ -156,7 +159,7 @@ export async function runSetup(argv: string[], io: SetupIo): Promise<number> {
     return 0;
   }
 
-  // 1. Host CLI present? (And on a tested version — warn, don't block, below it.)
+  // 1. Host CLI present and new enough for the declared OpenClaw 2.0 contract?
   const ver = io.exec("openclaw", ["--version"]);
   if (ver.status !== 0) {
     io.log("error: the `openclaw` CLI was not found — install OpenClaw first (https://docs.openclaw.ai).");
@@ -165,14 +168,41 @@ export async function runSetup(argv: string[], io: SetupIo): Promise<number> {
   const detected = parseOpenclawVersion(ver.output);
   if (detected && belowFloor(detected)) {
     io.log(
-      `warning: your OpenClaw is ${detected.join(".")}; this plugin is tested on >= ${MIN_OPENCLAW.join(".")}. ` +
-        "It may still work — consider `npm install -g openclaw@latest`.",
+      `error: your OpenClaw is ${detected.join(".")}; this plugin requires >= ${MIN_OPENCLAW.join(".")} (OpenClaw 2.0). ` +
+        "Upgrade OpenClaw before installing the plugin.",
     );
+    return 1;
   }
 
-  // 2. Official install (idempotent via --force so re-running upgrades in place).
+  // 2. OpenClaw 2.0 requires explicit capability consent before a plugin can
+  //    claim the exclusive memory slot. `--grant` implies this narrower consent;
+  //    otherwise ask interactively or fail closed in automation.
+  let acceptCapabilities = args.acceptCapabilities ?? (args.grant === true ? true : undefined);
+  if (acceptCapabilities === undefined) {
+    if (io.isInteractive) {
+      const a = (
+        await io.ask(
+          "Install EverOS Memory and let it claim OpenClaw's exclusive memory capability (replacing the current memory-slot plugin)? [y/N] ",
+        )
+      )
+        .trim()
+        .toLowerCase();
+      acceptCapabilities = a === "y" || a === "yes";
+    } else {
+      io.log(
+        "error: OpenClaw 2.0 requires explicit capability consent; rerun with --accept-capabilities (or --grant).",
+      );
+      return 1;
+    }
+  }
+  if (!acceptCapabilities) {
+    io.log("Installation cancelled: the memory capability was not accepted.");
+    return 1;
+  }
+
+  // 3. Official install (idempotent via --force so re-running upgrades in place).
   io.log(`Installing plugin from ${args.spec} …`);
-  const inst = io.exec("openclaw", ["plugins", "install", args.spec, "--force"]);
+  const inst = io.exec("openclaw", ["plugins", "install", args.spec, "--force", "--accept-capabilities"]);
   if (inst.status !== 0) {
     io.log(inst.output.trim());
     io.log("error: plugin install failed.");
@@ -180,12 +210,13 @@ export async function runSetup(argv: string[], io: SetupIo): Promise<number> {
   }
   io.log("Plugin installed (memory slot claimed).");
 
-  // 3. Consent-gated capture grant. Never silently granted: OpenClaw blocks
-  //    conversation access for non-bundled plugins BY DESIGN.
+  // 4. Consent-gated conversation grant. Never silently granted: OpenClaw 2.0
+  //    blocks both before_prompt_build recall and agent_end capture for
+  //    non-bundled plugins without it.
   let grant = args.grant;
   if (grant === undefined) {
     if (io.isInteractive) {
-      const a = (await io.ask("Allow the plugin to read conversation content so it can SAVE memory? [y/N] "))
+      const a = (await io.ask("Allow conversation access so the plugin can RECALL and SAVE memory? [y/N] "))
         .trim()
         .toLowerCase();
       grant = a === "y" || a === "yes";
@@ -206,13 +237,13 @@ export async function runSetup(argv: string[], io: SetupIo): Promise<number> {
       io.log("error: failed to set the conversation-access grant.");
       return 1;
     }
-    io.log("Conversation access granted — the plugin can save memory.");
+    io.log("Conversation access granted — the plugin can recall and save memory.");
   } else {
-    io.log("Capture stays OFF: the plugin will recall but never save. Grant later with:");
+    io.log("Memory stays OFF: the plugin will neither recall nor save. Grant later with:");
     io.log(`  openclaw config set 'plugins.entries.${PLUGIN_ID}.hooks.allowConversationAccess' true`);
   }
 
-  // 4. EverOS wiring. A non-default base URL must ALSO reach the plugin's own
+  // 5. EverOS wiring. A non-default base URL must ALSO reach the plugin's own
   //    config — polling a custom URL while the plugin still talks to the default
   //    port would "succeed" against a server the plugin never uses.
   if (args.baseUrl !== DEFAULT_BASE_URL) {
@@ -289,7 +320,7 @@ export async function runSetup(argv: string[], io: SetupIo): Promise<number> {
     }
   }
 
-  // 5. Restart so the gateway loads the plugin (and provisions EverOS).
+  // 6. Restart so the gateway loads the plugin (and provisions EverOS).
   if (args.restart) {
     io.log("Restarting the OpenClaw gateway …");
     const r = io.exec("openclaw", ["gateway", "restart"]);

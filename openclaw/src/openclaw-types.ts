@@ -7,7 +7,7 @@
  * from it in our public signatures would ship `.d.ts` files that reference
  * names consumers can never resolve (with or without the peer installed).
  * Instead, every type the plugin's surface needs is declared here, verified
- * against the real SDK (openclaw 2026.6.x `dist/plugin-sdk/hook-types-*.d.ts`).
+ * against the real SDK (OpenClaw 2026.8.1 / 2.0).
  * Only the runtime VALUE `definePluginEntry` is imported from the peer (typed
  * by the tiny ambient shim in `openclaw-sdk.d.ts`, which never leaks into dist).
  */
@@ -15,6 +15,7 @@
 /** Hook ctx for agent-scoped hooks (`PluginHookAgentContext`) — all optional. */
 export interface PluginHookAgentContext {
   agentId?: string;
+  runId?: string;
   sessionId?: string;
   sessionKey?: string;
   workspaceDir?: string;
@@ -48,6 +49,46 @@ export interface BeforePromptBuildResult {
   appendContext?: string;
   prependSystemContext?: string;
   appendSystemContext?: string;
+  toolsAllow?: string[];
+}
+
+export type PluginHookMediaKind = "image" | "audio" | "video" | "document" | "sticker" | "unknown";
+
+/** OpenClaw 2.0's canonical staged attachment fact. */
+export interface PluginHookMediaFact {
+  path?: string;
+  url?: string;
+  contentType?: string;
+  kind?: PluginHookMediaKind;
+  transcribed?: boolean;
+  messageId?: string;
+  workspaceDir?: string;
+}
+
+/** `message_received` event used to collect staged inbound attachments. */
+export interface MessageReceivedEvent {
+  from: string;
+  content: string;
+  timestamp?: number;
+  messageId?: string;
+  sessionKey?: string;
+  runId?: string;
+  media?: PluginHookMediaFact[];
+  originalMedia?: PluginHookMediaFact[];
+  mediaStagingPending?: boolean;
+  [key: string]: unknown;
+}
+
+/** Channel/message context; runId/sessionKey correlate with `agent_end`. */
+export interface PluginHookMessageContext {
+  channelId: string;
+  accountId?: string;
+  conversationId?: string;
+  sessionKey?: string;
+  runId?: string;
+  messageId?: string;
+  senderId?: string;
+  [key: string]: unknown;
 }
 
 /** `agent_end` event. Note `durationMs` (not `duration`). */
@@ -73,8 +114,8 @@ export interface SessionEndEvent {
   messageCount: number;
   durationMs?: number;
   reason?: "new" | "reset" | "idle" | "daily" | "compaction" | "deleted" | "shutdown" | "restart" | "unknown";
-  nextSessionId?: string;
-  nextSessionKey?: string;
+  sessionFile?: string;
+  transcriptArchived?: boolean;
   [key: string]: unknown;
 }
 
@@ -89,6 +130,8 @@ export interface MemoryPluginCapability {
   flushPlanResolver?: unknown;
   runtime?: unknown;
   publicArtifacts?: unknown;
+  deterministicRecallToolName?: string;
+  supportsPrivateTranscriptRecall?: boolean;
 }
 
 export interface PluginLogger {
@@ -116,8 +159,15 @@ export interface OpenClawPluginApi {
   readonly id: string;
   readonly name: string;
   logger?: PluginLogger;
+  /** Full host config snapshot. Used only to honor the explicit conversation-access grant. */
+  config?: unknown;
   /** Manifest-schema config the host resolved from `plugins.entries.<id>.config`. */
   pluginConfig?: Record<string, unknown>;
+  on(
+    event: "message_received",
+    handler: (event: MessageReceivedEvent, ctx: PluginHookMessageContext) => void | Promise<void>,
+    opts?: OnOptions,
+  ): void;
   on(
     event: "before_prompt_build",
     handler: (

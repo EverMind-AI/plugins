@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type EverosClient, EverosError } from "../src/everos.js";
 import {
+  appendInboundMedia,
   buildRecallQuery,
   clipHead,
   createHandlers,
   type HandlerDeps,
+  mediaFactToContentItem,
   projectIdFrom,
   recentUserText,
   render,
@@ -59,7 +61,7 @@ const baseDeps = (client: EverosClient): HandlerDeps => ({
   userId: "kevin",
   agentId: "openclaw",
   appId: "openclaw",
-  pluginId: "evermind-ai-everos",
+  conversationAccessGranted: true,
   queryN: 1,
   queryMaxChars: 500,
 });
@@ -286,6 +288,48 @@ test("toMessageItems: an image-only message is preserved (was silently dropped b
   assert.deepEqual(items[0]!.content, [{ type: "image", base64: "IMG", ext: "jpg" }]);
 });
 
+test("toMessageItems: forwards inline audio as an EverOS audio item", () => {
+  const items = toMessageItems(
+    [{ role: "user", content: [{ type: "audio", data: "AUDIO", mimeType: "audio/mpeg" }] }],
+    baseDeps(spyClient().client),
+    1000,
+  );
+  assert.deepEqual(items[0]!.content, [{ type: "audio", base64: "AUDIO", ext: "mp3" }]);
+});
+
+test("mediaFactToContentItem: maps staged OpenClaw 2.0 audio and documents", () => {
+  assert.deepEqual(mediaFactToContentItem({ path: "/tmp/voice.mp3", contentType: "audio/mpeg", kind: "audio" }), {
+    type: "audio",
+    uri: "file:///tmp/voice.mp3",
+    ext: "mp3",
+    name: "voice.mp3",
+  });
+  assert.deepEqual(
+    mediaFactToContentItem({
+      path: "brief.pdf",
+      workspaceDir: "/tmp/workspace",
+      contentType: "application/pdf",
+      kind: "document",
+    }),
+    { type: "pdf", uri: "file:///tmp/workspace/brief.pdf", ext: "pdf", name: "brief.pdf" },
+  );
+});
+
+test("mediaFactToContentItem: skips raw video because EverOS has no video content type", () => {
+  assert.equal(mediaFactToContentItem({ path: "/tmp/demo.mp4", contentType: "video/mp4", kind: "video" }), undefined);
+});
+
+test("appendInboundMedia: appends media to the last user turn without duplicating it", () => {
+  const items = toMessageItems([{ role: "user", content: "listen" }], baseDeps(spyClient().client), 1000);
+  const media = [{ type: "audio" as const, uri: "file:///tmp/voice.mp3", ext: "mp3" }];
+  appendInboundMedia(items, media, { userId: "kevin" }, 1001);
+  appendInboundMedia(items, media, { userId: "kevin" }, 1002);
+  assert.deepEqual(items[0]!.content, [
+    { type: "text", text: "listen" },
+    { type: "audio", uri: "file:///tmp/voice.mp3", ext: "mp3" },
+  ]);
+});
+
 test("toMessageItems: assistant toolCall parts become tool_calls; thinking dropped; text kept", () => {
   const items = toMessageItems(
     [
@@ -446,40 +490,6 @@ test("recall: one track failing still returns the other (partial failure)", asyn
   assert.ok(out && /recovered/.test(out.prependContext!));
 });
 
-// ── grant-blocked nudge (recall fires, capture never) ────────────────────────
-
-test("nudge: warns ONCE after 5 captureless recalls (grant blocked)", async () => {
-  const spy = spyClient();
-  const warnings: string[] = [];
-  const h = createHandlers({ ...baseDeps(spy.client), logger: { warn: (m) => warnings.push(m) } });
-  // Simulate allowConversationAccess=false: agent_end is stripped, so capture is
-  // never called; only recall fires.
-  for (let i = 1; i <= 6; i++) await h.recall({ prompt: `q${i}`, messages: [] }, ctx());
-  const hits = warnings.filter((w) => w.includes("allowConversationAccess"));
-  assert.equal(hits.length, 1); // exactly once, not per-turn
-  assert.match(hits[0]!, /plugins\.entries\.evermind-ai-everos\.hooks\.allowConversationAccess/);
-});
-
-test("nudge: tolerates a few concurrent turn-starts before any turn ends (no false positive)", async () => {
-  const spy = spyClient();
-  const warnings: string[] = [];
-  const h = createHandlers({ ...baseDeps(spy.client), logger: { warn: (m) => warnings.push(m) } });
-  // 4 overlapping turns start (recalls) before the first agent_end lands — the
-  // grant is fine, just concurrency. Must NOT warn.
-  for (let i = 1; i <= 4; i++) await h.recall({ prompt: `q${i}`, messages: [] }, ctx());
-  assert.equal(warnings.filter((w) => w.includes("allowConversationAccess")).length, 0);
-});
-
-test("nudge: stays silent once capture has fired (grant present)", async () => {
-  const spy = spyClient();
-  const warnings: string[] = [];
-  const h = createHandlers({ ...baseDeps(spy.client), logger: { warn: (m) => warnings.push(m) } });
-  await h.recall({ prompt: "q1", messages: [] }, ctx());
-  await h.capture({ messages: [{ role: "user", content: "x" }], success: true }, ctx()); // capture fired
-  for (let i = 2; i <= 8; i++) await h.recall({ prompt: `q${i}`, messages: [] }, ctx());
-  assert.equal(warnings.filter((w) => w.includes("allowConversationAccess")).length, 0);
-});
-
 // ── capture ──────────────────────────────────────────────────────────────────
 
 test("capture: posts /add with session + scoped messages", async () => {
@@ -490,6 +500,70 @@ test("capture: posts /add with session + scoped messages", async () => {
   assert.equal(spy.adds[0]!.session_id, "sess-1");
   assert.equal(spy.adds[0]!.project_id, "EverOS");
   assert.equal(spy.adds[0]!.messages[0]!.sender_id, "kevin");
+});
+
+test("capture: correlates staged OpenClaw 2.0 audio by runId", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  h.media(
+    {
+      from: "kevin",
+      content: "voice note",
+      runId: "run-1",
+      media: [{ path: "/tmp/voice.mp3", contentType: "audio/mpeg", kind: "audio" }],
+    },
+    { channelId: "telegram", runId: "run-1", sessionKey: "sess-1" },
+  );
+  await h.capture(
+    { runId: "run-1", messages: [{ role: "user", content: "voice note" }], success: true },
+    ctx({ runId: "run-1", sessionKey: "sess-1" }),
+  );
+  assert.deepEqual(spy.adds[0]!.messages[0]!.content, [
+    { type: "text", text: "voice note" },
+    { type: "audio", uri: "file:///tmp/voice.mp3", ext: "mp3", name: "voice.mp3" },
+  ]);
+});
+
+test("media: ignores attachment facts without the explicit conversation grant", async () => {
+  const spy = spyClient();
+  const h = createHandlers({ ...baseDeps(spy.client), conversationAccessGranted: false });
+  h.media(
+    {
+      from: "kevin",
+      content: "voice note",
+      runId: "run-1",
+      media: [{ path: "/tmp/voice.mp3", contentType: "audio/mpeg", kind: "audio" }],
+    },
+    { channelId: "telegram", runId: "run-1" },
+  );
+  await h.capture({ runId: "run-1", messages: [{ role: "user", content: "voice note" }], success: true }, ctx());
+  assert.equal(spy.adds[0]!.messages[0]!.content, "voice note");
+});
+
+test("media: pending remote staging keeps only a reachable original HTTP URL", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  h.media(
+    {
+      from: "kevin",
+      content: "remote notes",
+      runId: "run-remote",
+      mediaStagingPending: true,
+      originalMedia: [
+        { path: "/remote-only/voice.mp3", contentType: "audio/mpeg", kind: "audio" },
+        { url: "https://cdn.example.com/brief.pdf", contentType: "application/pdf", kind: "document" },
+      ],
+    },
+    { channelId: "remote", runId: "run-remote" },
+  );
+  await h.capture(
+    { runId: "run-remote", messages: [{ role: "user", content: "remote notes" }], success: true },
+    ctx({ runId: "run-remote" }),
+  );
+  assert.deepEqual(spy.adds[0]!.messages[0]!.content, [
+    { type: "text", text: "remote notes" },
+    { type: "pdf", uri: "https://cdn.example.com/brief.pdf", ext: "pdf", name: "brief.pdf" },
+  ]);
 });
 
 test("capture: chunks a >500-message turn into ordered ≤500 batches (no 422, no loss)", async () => {
@@ -589,6 +663,38 @@ test("capture: a transient 5xx does NOT downgrade an image batch to text-only", 
   assert.ok(Array.isArray(adds[0]!.messages[0]!.content)); // the image payload was never flattened
   assert.doesNotMatch(warnings.join(" "), /retrying text-only/);
   assert.match(warnings.join(" "), /capture failed/); // surfaced via the outer fail-open catch
+});
+
+test("capture: CAPABILITY_UNAVAILABLE retries multimodal content text-only", async () => {
+  const adds: AddRequest[] = [];
+  const client: EverosClient = {
+    async health() {
+      return { status: "ok" };
+    },
+    async search() {
+      return EMPTY;
+    },
+    async flush() {
+      return { status: "no_extraction" };
+    },
+    async add(req) {
+      adds.push(req);
+      if (req.messages.some((m) => Array.isArray(m.content))) {
+        throw new EverosError(503, "CAPABILITY_UNAVAILABLE", "multimodal_upload is unavailable");
+      }
+      return { message_count: req.messages.length, status: "accumulated" };
+    },
+  };
+  const h = createHandlers(baseDeps(client));
+  await h.capture(
+    {
+      messages: [{ role: "user", content: [{ type: "audio", data: "AUDIO", mimeType: "audio/mpeg" }] }],
+      success: true,
+    },
+    ctx(),
+  );
+  assert.equal(adds.length, 2);
+  assert.equal(adds[1]!.messages[0]!.content, "[audio]");
 });
 
 test("capture: a 422 media-shape rejection still falls back to text-only", async () => {

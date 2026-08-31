@@ -17,16 +17,33 @@ interface Recorder {
   capabilities: unknown[];
   onCalls: OnCall[];
   services: { id: string; start: unknown; stop: unknown }[];
+  warnings: string[];
 }
 
-function recorder(): Recorder {
+function recorder(conversationAccessGranted = true): Recorder {
   const capabilities: unknown[] = [];
   const onCalls: OnCall[] = [];
   const services: { id: string; start: unknown; stop: unknown }[] = [];
+  const warnings: string[] = [];
   const api = {
     id: "evermind-ai-everos",
     name: "OpenClaw Memory — EverOS",
-    logger: { info() {}, warn() {}, error() {} },
+    config: {
+      plugins: {
+        entries: {
+          "evermind-ai-everos": {
+            hooks: { allowConversationAccess: conversationAccessGranted, allowPromptInjection: true },
+          },
+        },
+      },
+    },
+    logger: {
+      info() {},
+      warn(message: string) {
+        warnings.push(message);
+      },
+      error() {},
+    },
     on(event: string, handler: unknown, opts?: unknown) {
       onCalls.push({ event, handler, opts });
     },
@@ -37,7 +54,7 @@ function recorder(): Recorder {
       services.push(service);
     },
   } as unknown as OpenClawPluginApi;
-  return { api, capabilities, onCalls, services };
+  return { api, capabilities, onCalls, services, warnings };
 }
 
 test("register: claims the memory slot with an EMPTY capability, exactly once", () => {
@@ -48,12 +65,29 @@ test("register: claims the memory slot with an EMPTY capability, exactly once", 
   assert.equal(Object.keys(r.capabilities[0] as object).length, 0);
 });
 
-test("register: wires exactly the four lifecycle hooks — no more, no fewer, no dupes", () => {
+test("register: wires OpenClaw 2.0 media plus four lifecycle hooks exactly once", () => {
   const r = recorder();
   register(r.api);
   const events = r.onCalls.map((c) => c.event).sort();
-  assert.deepEqual(events, ["agent_end", "before_prompt_build", "before_reset", "session_end"]);
+  assert.deepEqual(events, ["agent_end", "before_prompt_build", "before_reset", "message_received", "session_end"]);
   assert.equal(new Set(events).size, events.length); // no duplicate registrations
+});
+
+test("register: without the explicit grant, media is not registered and the user is warned", () => {
+  const r = recorder(false);
+  register(r.api);
+  assert.ok(!r.onCalls.some((call) => call.event === "message_received"));
+  assert.ok(r.warnings.some((message) => message.includes("memory recall and capture are disabled")));
+});
+
+test("register: warns when OpenClaw 2.0 prompt injection is explicitly disabled", () => {
+  const r = recorder();
+  const cfg = r.api.config as {
+    plugins: { entries: { "evermind-ai-everos": { hooks: { allowPromptInjection: boolean } } } };
+  };
+  cfg.plugins.entries["evermind-ai-everos"].hooks.allowPromptInjection = false;
+  register(r.api);
+  assert.ok(r.warnings.some((message) => message.includes("allowPromptInjection is false")));
 });
 
 test("register: before_prompt_build gets the 5s recall budget; the others pass no opts", () => {
@@ -61,6 +95,7 @@ test("register: before_prompt_build gets the 5s recall budget; the others pass n
   register(r.api);
   const byEvent = new Map(r.onCalls.map((c) => [c.event, c]));
   assert.deepEqual(byEvent.get("before_prompt_build")?.opts, { timeoutMs: 5000 });
+  assert.equal(byEvent.get("message_received")?.opts, undefined);
   assert.equal(byEvent.get("agent_end")?.opts, undefined);
   assert.equal(byEvent.get("session_end")?.opts, undefined);
   assert.equal(byEvent.get("before_reset")?.opts, undefined);

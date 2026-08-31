@@ -62,6 +62,7 @@ test("parseArgs: defaults", () => {
   assert.ok(!("error" in a));
   assert.equal(a.spec, "@evermind-ai/openclaw-plugin");
   assert.equal(a.grant, undefined);
+  assert.equal(a.acceptCapabilities, undefined);
   assert.equal(a.restart, true);
   assert.equal(a.baseUrl, "http://127.0.0.1:8000");
 });
@@ -69,6 +70,7 @@ test("parseArgs: defaults", () => {
 test("parseArgs: positional spec + flags", () => {
   const a = parseArgs([
     "./plugin.tgz",
+    "--accept-capabilities",
     "--grant",
     "--no-restart",
     "--everos-dir",
@@ -79,6 +81,7 @@ test("parseArgs: positional spec + flags", () => {
   assert.ok(!("error" in a));
   assert.equal(a.spec, "./plugin.tgz");
   assert.equal(a.grant, true);
+  assert.equal(a.acceptCapabilities, true);
   assert.equal(a.restart, false);
   assert.equal(a.everosDir, "/opt/EverOS");
   assert.equal(a.baseUrl, "http://host:9000"); // trailing slash stripped
@@ -98,19 +101,19 @@ test("parseOpenclawVersion: real output shapes, and garbage", () => {
   assert.equal(parseOpenclawVersion("no version here"), undefined);
 });
 
-test("version floor: an older OpenClaw gets a WARNING but setup continues", async () => {
+test("version floor: an older OpenClaw is rejected before install", async () => {
   const f = fakeIo({ health: [true], versionOutput: "OpenClaw 2026.5.7 (abc1234)" });
   const code = await runSetup(["--grant"], f.io);
-  assert.equal(code, 0); // warn, never block (fail-open philosophy)
-  assert.ok(f.logs.some((l) => l.includes("2026.5.7") && l.includes("tested on >= 2026.6.10")));
-  assert.ok(f.calls.some((c) => c.startsWith("openclaw plugins install"))); // still proceeded
+  assert.equal(code, 1);
+  assert.ok(f.logs.some((l) => l.includes("2026.5.7") && l.includes("requires >= 2026.8.1")));
+  assert.ok(!f.calls.some((c) => c.startsWith("openclaw plugins install")));
 });
 
-test("version floor: at/above the floor (or unparseable) → no warning", async () => {
-  for (const out of ["OpenClaw 2026.6.10 (x)", "OpenClaw 2026.7.1-2 (y)", "ok"]) {
+test("version floor: at/above the OpenClaw 2.0 floor (or unparseable) → no warning", async () => {
+  for (const out of ["OpenClaw 2026.8.1 (x)", "OpenClaw 2026.9.0 (y)", "ok"]) {
     const f = fakeIo({ health: [true], versionOutput: out });
     await runSetup(["--grant"], f.io);
-    assert.ok(!f.logs.some((l) => l.includes("tested on >=")), `unexpected warn for ${out}`);
+    assert.ok(!f.logs.some((l) => l.includes("requires >=")), `unexpected version error for ${out}`);
   }
 });
 
@@ -120,7 +123,11 @@ test("setup: happy path — install, granted via flag, EverOS already healthy, r
   const f = fakeIo({ health: [true] });
   const code = await runSetup(["--grant"], f.io);
   assert.equal(code, 0);
-  assert.ok(f.calls.some((c) => c.startsWith("openclaw plugins install @evermind-ai/openclaw-plugin --force")));
+  assert.ok(
+    f.calls.some((c) =>
+      c.startsWith("openclaw plugins install @evermind-ai/openclaw-plugin --force --accept-capabilities"),
+    ),
+  );
   assert.ok(
     f.calls.some((c) => c === `openclaw config set plugins.entries.${PLUGIN_ID}.hooks.allowConversationAccess true`),
   );
@@ -138,23 +145,41 @@ test("setup: missing openclaw CLI → clear error, nothing else attempted", asyn
   assert.ok(f.logs.some((l) => l.includes("install OpenClaw first")));
 });
 
-test("setup: consent prompt — 'y' grants, anything else doesn't", async () => {
-  const yes = fakeIo({ interactive: true, answers: ["y"], health: [true] });
+test("setup: capability and conversation consent prompts are independent", async () => {
+  const yes = fakeIo({ interactive: true, answers: ["y", "y"], health: [true] });
   await runSetup([], yes.io);
+  assert.ok(yes.calls.some((c) => c.includes("--accept-capabilities")));
   assert.ok(yes.calls.some((c) => c.includes("allowConversationAccess true")));
 
-  const no = fakeIo({ interactive: true, answers: ["nah"], health: [true] });
+  const no = fakeIo({ interactive: true, answers: ["y", "nah"], health: [true] });
   await runSetup([], no.io);
   assert.ok(!no.calls.some((c) => c.includes("allowConversationAccess")));
-  assert.ok(no.logs.some((l) => l.includes("Capture stays OFF")));
+  assert.ok(no.logs.some((l) => l.includes("Memory stays OFF")));
 });
 
-test("setup: non-interactive with no flag → grant SKIPPED (safe default), instructions printed", async () => {
+test("setup: non-interactive capability consent is required", async () => {
   const f = fakeIo({ interactive: false, health: [true] });
   const code = await runSetup([], f.io);
+  assert.equal(code, 1);
+  assert.ok(!f.calls.some((c) => c.startsWith("openclaw plugins install")));
+  assert.ok(f.logs.some((l) => l.includes("--accept-capabilities")));
+});
+
+test("setup: non-interactive install can accept capability while skipping conversation access", async () => {
+  const f = fakeIo({ interactive: false, health: [true] });
+  const code = await runSetup(["--accept-capabilities", "--no-grant"], f.io);
   assert.equal(code, 0);
   assert.ok(!f.calls.some((c) => c.includes("allowConversationAccess")));
-  assert.ok(f.logs.some((l) => l.includes("--grant")));
+  assert.ok(f.calls.some((c) => c.includes("--accept-capabilities")));
+  assert.ok(f.logs.some((l) => l.includes("Memory stays OFF")));
+});
+
+test("setup: declining the memory capability cancels before install", async () => {
+  const f = fakeIo({ interactive: true, answers: ["no"] });
+  const code = await runSetup([], f.io);
+  assert.equal(code, 1);
+  assert.ok(!f.calls.some((c) => c.startsWith("openclaw plugins install")));
+  assert.ok(f.logs.some((l) => l.includes("cancelled")));
 });
 
 test("setup: EverOS down + --everos-dir with venv binary → quoted START_CMD + EVEROS_DIR, then polls to healthy", async () => {
@@ -209,7 +234,7 @@ test("setup: interactive prompt for the EverOS checkout is honored", async () =>
     health: [false, true],
     fail: ["everos --help"],
     interactive: true,
-    answers: ["y", "/Users/me/EverOS"],
+    answers: ["y", "y", "/Users/me/EverOS"],
     files: ["/Users/me/EverOS/.venv/bin/everos"],
   });
   const code = await runSetup([], f.io);

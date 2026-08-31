@@ -4,17 +4,20 @@ Persistent, cross-session memory for **OpenClaw**, backed by a self-hosted
 [EverOS](https://github.com/EverMind-AI/EverOS) — through natural conversation.
 
 This plugin claims OpenClaw's exclusive **memory slot** and wires the OpenClaw
-lifecycle to a local EverOS server (`/api/v1/memory/*` on `127.0.0.1:8000`).
+lifecycle to a local EverOS server (`/api/v2/memory/*` on `127.0.0.1:8000`).
 
 > **v3.0.0 is a major-version replacement.** Versions ≤ 2.x were *context-engine*
 > plugins targeting the old EverMemOS API (`/api/v1/memories/*` at `:1995`). This
-> version is the *memory-slot* plugin for the current EverOS (`/api/v1/memory/*`
-> at `:8000`). Requires **EverOS ≥ 1.0.0** and **OpenClaw ≥ 2026.6.10**.
+> version is the *memory-slot* plugin for the current EverOS (`/api/v2/memory/*`
+> at `:8000`). Requires **EverOS ≥ 1.2.3** and **OpenClaw ≥ 2026.8.1 (2.0)**.
+> The package declares this host/API floor in OpenClaw's install-time compatibility
+> metadata, so an older Gateway is rejected before plugin code loads.
 
 ## What it does
 
 - Recalls relevant memories **before every reply** and injects them as context
-- Saves every finished turn **after it ends** — text, images, and full tool-call trajectories
+- Saves every finished turn **after it ends** — text, staged images/audio/documents,
+  and full tool-call trajectories
 - Seals the conversation tail when a session ends (`/new`, `/reset`, shutdown —
   including clients whose `/new` never notifies the gateway)
 - **Auto-starts a local EverOS** if one isn't already running (detect-then-provision)
@@ -38,16 +41,19 @@ npx --yes --package @evermind-ai/openclaw-plugin everos-setup
 
 The installer will:
 
-- run the official `openclaw plugins install` (claims the memory slot)
-- **ask** before granting conversation access — required for saving memory,
+- **ask** before accepting the plugin's declared memory capability, then run
+  the official `openclaw plugins install` (claims the exclusive memory slot)
+- **ask** before granting conversation access — required for both recall and saving,
   never granted silently
 - help point the plugin at your EverOS checkout when `everos` isn't on the
   gateway's PATH
 - restart the gateway and health-check the result
 
 Non-interactive / scripted installs: `everos-setup --grant --everos-dir
-/path/to/EverOS` (all flags via `everos-setup --help`). Prefer doing it by
-hand? See [Manual install](#manual-install).
+/path/to/EverOS` (`--grant` also accepts the declared memory capability). To
+install while leaving recall/capture off, use `--accept-capabilities --no-grant`.
+All flags are listed by `everos-setup --help`. Prefer doing it by hand? See
+[Manual install](#manual-install).
 
 Then verify with natural language — just mention something about yourself:
 
@@ -99,6 +105,44 @@ uv run everos init      # creates ~/.everos/everos.toml (+ ome.toml) — REQUIRE
 uv run everos server start
 ```
 
+## Images, audio, documents, and video
+
+The plugin consumes OpenClaw 2.0's canonical, staged inbound media facts and
+forwards supported assets to EverOS. Enable EverOS's optional parser in the
+EverOS checkout:
+
+```bash
+uv sync --extra multimodal
+```
+
+Then configure the parser's **separate** provider in `~/.everos/everos.toml`.
+This is not the main `[llm]` key:
+
+```toml
+[multimodal]
+model = "google/gemini-3-flash-preview"
+base_url = "https://openrouter.ai/api/v1"
+api_key = "<your key>"
+```
+
+The selected endpoint/model must accept `image_url` parts and, for voice notes,
+audio parts. Restart EverOS and verify that `/health` reports
+`capabilities.multimodal_llm: true` and does not list `multimodal_upload` under
+`disabled_features`.
+
+- Supported end to end: images, audio, PDF, HTML, email, and office documents.
+  Office files additionally require LibreOffice on the EverOS host.
+- Staged local files are sent as `file://` URIs, so OpenClaw and EverOS must see
+  the same filesystem path. If EverOS runs elsewhere, use an HTTP(S) media URL.
+  Restrict readable local paths with `[multimodal].file_uri_allow_dirs` when the
+  service is exposed beyond loopback.
+- EverOS 1.2.3 has **no raw `video` ContentItem type**. If OpenClaw's own media
+  understanding produces a transcript/description for an inbound video, the
+  plugin saves that resulting text, but deliberately does not send the raw
+  video file as a fake audio/image item.
+- If multimodal parsing is unavailable, the plugin retries the turn text-only
+  after a definite `415`, `422`, or `CAPABILITY_UNAVAILABLE` response.
+
 ## How natural-language memory works
 
 1. You send a normal message.
@@ -107,8 +151,9 @@ uv run everos server start
 3. Hits are injected as a clearly-fenced block of **untrusted historical
    context** — recalled memory informs the model, it can't issue instructions.
 4. OpenClaw replies normally.
-5. `agent_end` — the whole turn (user text, assistant text, tool calls, tool
-   results, images) is forwarded to EverOS `/add`.
+5. `message_received` + `agent_end` — the whole turn (user/assistant text,
+   tool calls/results, and staged images/audio/documents) is forwarded to EverOS
+   `/add`.
 6. EverOS extracts memory on topic boundaries as you chat; when a session ends —
    `/new`, `/reset`, gateway shutdown, or a client-side session switch — the
    plugin flushes the buffered tail so the last topic is never lost.
@@ -184,19 +229,22 @@ Recall injects up to four sections, all served by EverOS:
 - User and assistant text (the plugin strips its own injected recall block first,
   so memory never re-ingests itself)
 - Assistant **tool calls** and tool results, chained by `tool_call_id`
-- **Images** (inline base64 or URI). If the server rejects media (no multimodal
-  support), that turn retries text-only so nothing is lost
+- **Images, audio, PDF, HTML, email, and office documents** (inline payload or
+  staged URI). If EverOS definitively rejects multimodal input, the turn retries
+  text-only so its conversation text is not lost
+- **Video-derived text** produced by OpenClaw; raw video bytes are not sent
+  because EverOS 1.2.3 does not define a video content type
 - Oversized turns are chunked to EverOS's 500-message limit, in order
 
 ## Manual install
 
 ```bash
-openclaw plugins install @evermind-ai/openclaw-plugin
+openclaw plugins install @evermind-ai/openclaw-plugin --accept-capabilities
 ```
 
-Then grant memory capture — **required, one time** (OpenClaw blocks non-bundled
-plugins from reading conversation content by default, so without this the plugin
-recalls but never saves anything):
+Then grant conversation access — **required, one time**. OpenClaw 2.0 blocks
+both `before_prompt_build` recall and `agent_end` capture for non-bundled plugins
+without this grant:
 
 ```bash
 openclaw config set 'plugins.entries.evermind-ai-everos.hooks.allowConversationAccess' true
@@ -211,7 +259,9 @@ If `everos` lives in a project virtualenv, also set `EVEROS_OC_START_CMD` /
 
 | Problem | Fix |
 |---|---|
-| Recall works but **nothing is ever saved** | Grant capture: `openclaw config set 'plugins.entries.evermind-ai-everos.hooks.allowConversationAccess' true`, then restart the gateway. (The plugin logs a warning when it detects this state.) |
+| No recall and nothing is saved | Grant conversation access: `openclaw config set 'plugins.entries.evermind-ai-everos.hooks.allowConversationAccess' true`, then restart the gateway. The plugin logs a warning when it detects this state. |
+| Saves work but recall does not | Remove an explicit `hooks.allowPromptInjection: false` override (or set it to `true`), then restart the gateway. |
+| Audio/image/document becomes a placeholder | Install EverOS with the `multimodal` extra, configure `[multimodal]`, restart EverOS, and inspect `/health`. For a local file, also ensure the EverOS process can read that staged path. |
 | Backend connection failed | Check `EVEROS_OC_BASE_URL`, then `curl <baseUrl>/health` |
 | Auto-start never brings EverOS up | The gateway can't find `everos` — set `EVEROS_OC_START_CMD` to the absolute binary path and `EVEROS_OC_EVEROS_DIR` to the EverOS repo. Also check nothing else holds the single-instance lock (`~/.everos/.index/sqlite/ome.db.lock`) |
 | Asked right after telling — no memory yet | Extraction is asynchronous; wait a few seconds. Mid-conversation extraction triggers on topic changes; session end seals the rest |
@@ -223,7 +273,7 @@ If `everos` lives in a project virtualenv, also set `EVEROS_OC_START_CMD` /
 - `dist/index.js` — plugin entry (`openclaw.extensions`)
 - `src/setup.ts` / `src/setup-cli.ts` — the `everos-setup` one-command installer
 - `src/register.ts` — slot claim, hook wiring, provisioning service
-- `src/handlers.ts` — recall / capture / flush (+ session-switch safety net)
+- `src/handlers.ts` — staged media / recall / capture / flush (+ session-switch safety net)
 - `src/everos.ts` — typed EverOS REST client (`/add`, `/search`, `/flush`, `/health`)
 - `src/provision.ts` — detect-then-provision of the EverOS server
 - `src/config.ts` — `EVEROS_OC_*` configuration
@@ -235,7 +285,7 @@ If `everos` lives in a project virtualenv, also set `EVEROS_OC_START_CMD` /
 npm install
 npm run build        # tsc → dist/
 npm test             # unit tests; live smoke runs only if EverOS is up
-npm run ci           # lint + typecheck + build + test
+npm run ci           # lint + local/real-OpenClaw-2.0 typecheck + build + test
 ```
 
 ## License
