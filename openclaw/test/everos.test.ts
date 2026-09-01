@@ -185,7 +185,7 @@ test("search: unwraps the success envelope's data + posts the right path/body", 
   });
   assert.deepEqual(out, EMPTY_SEARCH);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.url, "http://x/api/v1/memory/search");
+  assert.equal(calls[0]!.url, "http://x/api/v2/memory/search");
   assert.equal(calls[0]!.method, "POST");
   assert.deepEqual(calls[0]!.body, {
     user_id: "kevin",
@@ -203,7 +203,7 @@ test("error envelope (non-2xx) throws EverosError with code/message/requestId", 
       status: 422,
       body: {
         request_id: "req-9",
-        error: { code: "HTTP_ERROR", message: "query too short", path: "/api/v1/memory/search" },
+        error: { code: "HTTP_ERROR", message: "query too short", path: "/api/v2/memory/search" },
       },
     }),
   });
@@ -287,11 +287,11 @@ test("add: unwraps the success envelope (message_count + status)", async () => {
   });
   const out = await c.add({ session_id: "s", app_id: "openclaw", project_id: "everos", messages: [] });
   assert.deepEqual(out, { message_count: 3, status: "extracted" });
-  assert.equal(calls[0]!.url, "http://x/api/v1/memory/add");
+  assert.equal(calls[0]!.url, "http://x/api/v2/memory/add");
   assert.equal(calls[0]!.method, "POST");
 });
 
-test("flush: posts /api/v1/memory/flush and unwraps data", async () => {
+test("flush: posts /api/v2/memory/flush and unwraps data", async () => {
   const calls: Captured[] = [];
   const c = createEverosClient({
     baseUrl: "http://x",
@@ -299,7 +299,7 @@ test("flush: posts /api/v1/memory/flush and unwraps data", async () => {
   });
   const out = await c.flush({ session_id: "s", app_id: "openclaw", project_id: "everos" });
   assert.deepEqual(out, { status: "extracted" });
-  assert.equal(calls[0]!.url, "http://x/api/v1/memory/flush");
+  assert.equal(calls[0]!.url, "http://x/api/v2/memory/flush");
   assert.deepEqual(calls[0]!.body, { session_id: "s", app_id: "openclaw", project_id: "everos" });
 });
 

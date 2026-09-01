@@ -1,0 +1,54 @@
+name: OpenClaw plugin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "openclaw/**"
+      - ".github/workflows/openclaw.yml"
+  pull_request:
+    paths:
+      - "openclaw/**"
+      - ".github/workflows/openclaw.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openclaw-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: OpenClaw 2.0 compatibility and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: openclaw
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.22.3"
+          cache: npm
+          cache-dependency-path: openclaw/package-lock.json
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Lint, typecheck against OpenClaw 2.0, test, and build
+        run: npm run ci
+
+      - name: Audit production dependency tree
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify npm package contents
+        run: npm pack --dry-run

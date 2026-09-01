@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.test.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test/sdk-compat.ts"],
+  "exclude": ["src/openclaw-sdk.d.ts", "test/**/*.test.ts"]
+}

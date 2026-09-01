@@ -8,5 +8,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  "exclude": ["test/sdk-compat.ts"]
 }
