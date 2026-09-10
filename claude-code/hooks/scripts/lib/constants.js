@@ -11,7 +11,16 @@ export const HEALTH_TIMEOUT_MS = 2000;
 export const START_WAIT_MS = 5000;
 export const START_POLL_MS = 500;
 
-export const RECALL_DEADLINE_MS = 3000;
+/**
+ * Recall budget. A warm search is 0.3-0.8s, so this is almost never spent; what
+ * it buys is the tail. Two of the first three live sessions lost their opening
+ * recall to a 3s budget, and a timed-out recall costs the whole feature for that
+ * turn while a slow one costs a moment. Override with EVEROS_CC_RECALL_TIMEOUT_MS;
+ * it must stay under the 10s UserPromptSubmit hook timeout in hooks.json.
+ */
+export const RECALL_DEADLINE_MS = 5000;
+export const RECALL_DEADLINE_MIN_MS = 500;
+export const RECALL_DEADLINE_MAX_MS = 9000;
 export const CAPTURE_DEADLINE_MS = 20000;
 export const FLUSH_DEADLINE_MS = 10000;
 
@@ -25,5 +34,8 @@ export const MIN_QUERY_TOKENS = 3;
 export const STATE_MAX_PROMPT_IDS = 200;
 export const STATE_TTL_DAYS = 30;
 
-export const TRANSCRIPT_READ_ATTEMPTS = 5;
-export const TRANSCRIPT_READ_DELAY_MS = 100;
+// The closing assistant entry lands a fraction of a second after Stop fires,
+// so this budget (10 x 200ms = 2s) has to outlast that flush. It sits well
+// inside the 20s capture deadline and the 30s host hook timeout.
+export const TRANSCRIPT_READ_ATTEMPTS = 10;
+export const TRANSCRIPT_READ_DELAY_MS = 200;

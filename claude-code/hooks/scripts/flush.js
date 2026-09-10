@@ -2,7 +2,7 @@
 import { runHook } from "./lib/hook-io.js";
 import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
-import { pruneState } from "./lib/state.js";
+import { markFlushed, pruneState } from "./lib/state.js";
 import { FLUSH_DEADLINE_MS } from "./lib/constants.js";
 
 // Registered for both SessionEnd and PreCompact. Sealing twice is harmless:
@@ -22,8 +22,10 @@ runHook("SessionEnd", async (input, ctx) => {
       { session_id: sessionId, app_id: identity.appId, project_id: identity.projectId },
       deadline(FLUSH_DEADLINE_MS),
     );
+    markFlushed(config.dataDir, sessionId);
     debug(`${event}: flush ${data?.status ?? "ok"}`);
   } catch (error) {
+    // Left unflushed on purpose: the next session sweeps it up.
     debug(`${event}: flush failed: ${error.message}`);
   }
 

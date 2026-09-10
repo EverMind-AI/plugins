@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startFakeEveros } from "./helpers/fake-everos.js";
 import { runHookScript } from "./helpers/run-hook.js";
+import { markStored, statePath, readState } from "../hooks/scripts/lib/state.js";
 
 const SCRIPT = "hooks/scripts/session-start.js";
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-start-")); }
@@ -21,6 +22,38 @@ test("a healthy EverOS produces no output", async () => {
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a healthy server is warmed with one search so the first prompt is not the cold one", async () => {
+  // Two of the first three live sessions lost their opening recall to a cold
+  // search path. SessionStart has a 15s budget and nobody waiting on it, so it
+  // pays that cost instead of the user's first prompt.
+  const server = await startFakeEveros();
+  const dir = tmp();
+  try {
+    await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    const searches = server.only("/api/v2/memory/search");
+    assert.equal(searches.length, 1, "exactly one warm-up search, not a full two-track recall");
+    assert.equal(searches[0].body.project_id, "proj");
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a warm-up that hangs never delays or alarms the session", async () => {
+  // Healthy server, stalled search: the warm-up must abort on its own budget.
+  const server = await startFakeEveros({ searchFn: () => new Promise(() => {}) });
+  const dir = tmp();
+  try {
+    const started = Date.now();
+    const { code, stdout } = await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir, EVEROS_CC_USER_ID: "tester",
+    });
+    assert.equal(code, 0);
+    assert.equal(stdout, "", "a stalled warm-up must stay silent, not warn");
+    assert.ok(Date.now() - started < 14000, "must stay inside the 15s hook timeout");
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a start command that cannot run is reported as a failure, not as starting", async () => {
   // A blank EVEROS_CC_START_CMD falls back to the default by design, so the
   // reachable "cannot start" case is a command that does not exist.
@@ -34,6 +67,42 @@ test("a start command that cannot run is reported as a failure, not as starting"
     assert.ok(json.systemMessage.includes("could not be started"), json.systemMessage);
     assert.ok(json.systemMessage.includes("/everos:status"));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a session abandoned by a cancelled SessionEnd is sealed by the next one", async () => {
+  // Claude Code cancels SessionEnd when the host exits in a hurry, which is
+  // routine under `claude -p`. Without this sweep the turns after EverOS's last
+  // topic boundary are never extracted.
+  const server = await startFakeEveros();
+  const dir = tmp();
+  try {
+    markStored(dir, "old-session", "p1", "repo-that-is-not-this-one");
+    const stale = new Date(Date.now() - 30 * 60 * 1000);
+    fs.utimesSync(statePath(dir, "old-session"), stale, stale);
+
+    await runHookScript(SCRIPT, { session_id: "new-session", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    const flushes = server.only("/api/v2/memory/flush");
+    assert.equal(flushes.length, 1);
+    assert.equal(flushes[0].body.session_id, "old-session");
+    assert.equal(flushes[0].body.project_id, "repo-that-is-not-this-one", "must seal the project the session ran in, not this one");
+    assert.equal(readState(dir, "old-session").flushed, true);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a session that is merely idle in another window is left alone", async () => {
+  const server = await startFakeEveros();
+  const dir = tmp();
+  try {
+    markStored(dir, "live-elsewhere", "p1");
+    await runHookScript(SCRIPT, { session_id: "new-session", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    assert.equal(server.only("/api/v2/memory/flush").length, 0);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("a non-loopback address is reported unreachable, never started", async () => {

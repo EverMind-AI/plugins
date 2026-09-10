@@ -70,6 +70,14 @@ test("dataDir prefers CLAUDE_PLUGIN_DATA and falls back under HOME", () => {
   assert.equal(loadConfig({ ...base }).dataDir, path.join("/home/tester", ".everos", ".claude-code"));
 });
 
+test("the recall timeout defaults to 5s and is clamped, never disabled", () => {
+  assert.equal(loadConfig({ ...base }).recallTimeoutMs, 5000);
+  assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "2500" }).recallTimeoutMs, 2500);
+  assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "0" }).recallTimeoutMs, 500);
+  assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "999999" }).recallTimeoutMs, 9000);
+  assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "nonsense" }).recallTimeoutMs, 5000);
+});
+
 test("verbose and debug read 1/true/yes", () => {
   assert.equal(loadConfig({ ...base, EVEROS_CC_VERBOSE: "1" }).verbose, true);
   assert.equal(loadConfig({ ...base, EVEROS_CC_VERBOSE: "true" }).verbose, true);

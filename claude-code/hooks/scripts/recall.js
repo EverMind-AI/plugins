@@ -5,7 +5,7 @@ import { createClient, deadline } from "./lib/everos.js";
 import { shouldRecall, buildQuery } from "./lib/query.js";
 import { render, summaryLine } from "./lib/render.js";
 import { claimWarning } from "./lib/state.js";
-import { RECALL_DEADLINE_MS } from "./lib/constants.js";
+
 
 runHook("UserPromptSubmit", async (input, ctx) => {
   const { config, debug } = ctx;
@@ -20,7 +20,7 @@ runHook("UserPromptSubmit", async (input, ctx) => {
   const client = createClient({ baseUrl: config.baseUrl });
   const query = buildQuery(prompt);
   // One signal for both tracks: the user pays this latency on every prompt.
-  const signal = deadline(RECALL_DEADLINE_MS);
+  const signal = deadline(config.recallTimeoutMs);
   const common = { app_id: identity.appId, project_id: identity.projectId, query };
 
   const userTrack = identity.userId

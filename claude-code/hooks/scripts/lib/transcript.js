@@ -163,12 +163,25 @@ export function toEverosMessages(entries, { userId, agentId }) {
 }
 
 /**
- * Read the transcript, retrying until the turn we were told about is on disk.
- * The host may still be flushing when Stop fires.
+ * A turn is finished once its closing assistant entry is on disk. Stop fires the
+ * moment the turn ends and the host is still flushing, so "the prompt id exists"
+ * is not the same as "the reply is readable": waiting only for the id captured
+ * the user message alone and silently lost every assistant reply.
+ */
+function looksComplete(turn) {
+  const conversational = turn.filter((e) => e?.type === "user" || e?.type === "assistant");
+  return conversational.length > 0 && conversational.at(-1).type === "assistant";
+}
+
+/**
+ * Read the transcript, retrying until the turn reads as finished. An interrupted
+ * turn may never get its closing entry, so after the last attempt we capture
+ * whatever is there rather than dropping the turn.
  */
 export async function readTurn(filePath, promptId, options = {}) {
   const attempts = options.attempts ?? TRANSCRIPT_READ_ATTEMPTS;
   const delayMs = options.delayMs ?? TRANSCRIPT_READ_DELAY_MS;
+  let latest = [];
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     let text;
     try {
@@ -177,8 +190,9 @@ export async function readTurn(filePath, promptId, options = {}) {
       text = "";
     }
     const turn = sliceTurn(parseTranscript(text), promptId);
-    if (turn.length > 0) return turn;
+    if (turn.length > latest.length) latest = turn;
+    if (looksComplete(turn)) return turn;
     if (attempt < attempts - 1) await sleep(delayMs);
   }
-  return [];
+  return latest;
 }

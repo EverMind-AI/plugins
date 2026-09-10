@@ -166,6 +166,45 @@ test("readTurn retries until the prompt id appears, then returns the slice", asy
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("readTurn waits for the assistant reply, not just for the prompt id", async () => {
+  // Stop fires the moment the turn ends, and the assistant entry can reach disk
+  // a fraction of a second later. Returning as soon as the prompt id appears
+  // captured the user message alone and silently lost every reply.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-late-"));
+  const file = path.join(dir, "t.jsonl");
+  fs.writeFileSync(file, JSON.stringify({
+    type: "user", isSidechain: false, promptId: "p", promptSource: "typed",
+    timestamp: "2026-09-10T10:00:00.000Z", message: { role: "user", content: "the question" },
+  }) + "\n");
+  setTimeout(() => {
+    fs.appendFileSync(file, JSON.stringify({
+      type: "assistant", isSidechain: false, requestId: "r",
+      timestamp: "2026-09-10T10:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "the answer" }] },
+    }) + "\n");
+  }, 300);
+  const turn = await readTurn(file, "p");
+  const messages = toEverosMessages(turn, IDS);
+  assert.deepEqual(messages.map((m) => m.role), ["user", "assistant"]);
+  assert.equal(messages[1].content, "the answer");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("readTurn gives up on an incomplete turn instead of blocking forever", async () => {
+  // An interrupted turn may never get its closing assistant entry; capture what
+  // is there rather than dropping the turn.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-partial-"));
+  const file = path.join(dir, "t.jsonl");
+  fs.writeFileSync(file, JSON.stringify({
+    type: "user", isSidechain: false, promptId: "p", promptSource: "typed",
+    timestamp: "2026-09-10T10:00:00.000Z", message: { role: "user", content: "interrupted" },
+  }) + "\n");
+  const started = Date.now();
+  const turn = await readTurn(file, "p", { attempts: 3, delayMs: 30 });
+  assert.equal(turn.length, 1);
+  assert.ok(Date.now() - started < 2000);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("readTurn returns an empty array for a missing file rather than throwing", async () => {
   assert.deepEqual(await readTurn("/nonexistent/path.jsonl", "p", { attempts: 1, delayMs: 1 }), []);
 });

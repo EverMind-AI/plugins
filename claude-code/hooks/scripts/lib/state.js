@@ -3,7 +3,7 @@ import path from "node:path";
 import { STATE_MAX_PROMPT_IDS, STATE_TTL_DAYS } from "./constants.js";
 import { sanitizeId } from "./identity.js";
 
-const EMPTY = () => ({ promptIds: [], warned: false });
+const EMPTY = () => ({ sessionId: null, projectId: null, promptIds: [], warned: false, flushed: false });
 
 function stateDir(dataDir) {
   return path.join(dataDir, "state");
@@ -13,13 +13,19 @@ export function statePath(dataDir, sessionId) {
   return path.join(stateDir(dataDir), `${sanitizeId(sessionId, "unknown")}.json`);
 }
 
+function parseState(raw) {
+  return {
+    sessionId: typeof raw?.sessionId === "string" ? raw.sessionId : null,
+    projectId: typeof raw?.projectId === "string" ? raw.projectId : null,
+    promptIds: Array.isArray(raw?.promptIds) ? raw.promptIds.filter((v) => typeof v === "string") : [],
+    warned: raw?.warned === true,
+    flushed: raw?.flushed === true,
+  };
+}
+
 export function readState(dataDir, sessionId) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(statePath(dataDir, sessionId), "utf8"));
-    return {
-      promptIds: Array.isArray(parsed?.promptIds) ? parsed.promptIds.filter((v) => typeof v === "string") : [],
-      warned: parsed?.warned === true,
-    };
+    return parseState(JSON.parse(fs.readFileSync(statePath(dataDir, sessionId), "utf8")));
   } catch {
     return EMPTY();
   }
@@ -37,18 +43,65 @@ export function isStored(state, promptId) {
   return typeof promptId === "string" && state.promptIds.includes(promptId);
 }
 
-export function markStored(dataDir, sessionId, promptId) {
+/**
+ * `projectId` is recorded with the turn because the sweep that seals an
+ * abandoned session may run from a later session in a different repository,
+ * and flushing with the wrong project id seals the wrong partition.
+ */
+export function markStored(dataDir, sessionId, promptId, projectId = null) {
   const state = readState(dataDir, sessionId);
   if (isStored(state, promptId)) return;
   state.promptIds = [...state.promptIds, promptId].slice(-STATE_MAX_PROMPT_IDS);
-  writeState(dataDir, sessionId, state);
+  // A new turn reopens the session: whatever was flushed before is now stale.
+  writeState(dataDir, sessionId, {
+    ...state,
+    sessionId,
+    projectId: projectId ?? state.projectId,
+    flushed: false,
+  });
+}
+
+export function markFlushed(dataDir, sessionId) {
+  const state = readState(dataDir, sessionId);
+  writeState(dataDir, sessionId, { ...state, sessionId, flushed: true });
+}
+
+/**
+ * Sessions whose tail was never sealed.
+ *
+ * Claude Code cancels the SessionEnd hook when the host exits in a hurry -
+ * routine under `claude -p` - which leaves the turns after EverOS's last topic
+ * boundary sitting in the buffer, never extracted. The next session sweeps them
+ * up rather than leaving a silent gap. Only sessions untouched for `idleMs` are
+ * eligible, so a session running in another window is never sealed underneath it.
+ */
+export function pendingFlushes(dataDir, idleMs) {
+  const dir = stateDir(dataDir);
+  const cutoff = Date.now() - idleMs;
+  const pending = [];
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return pending; }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const file = path.join(dir, name);
+    try {
+      // mtimeMs carries sub-millisecond precision and can read as marginally
+      // ahead of Date.now(), which would make a just-written file look like the
+      // future. Floor it so idleMs = 0 means "no idle requirement".
+      if (Math.floor(fs.statSync(file).mtimeMs) > cutoff) continue;
+      const state = parseState(JSON.parse(fs.readFileSync(file, "utf8")));
+      if (state.flushed || state.promptIds.length === 0) continue;
+      if (state.sessionId) pending.push({ sessionId: state.sessionId, projectId: state.projectId });
+    } catch { /* unreadable or racing; skip */ }
+  }
+  return pending;
 }
 
 /** True at most once per session: the caller may print an "EverOS is down" line. */
 export function claimWarning(dataDir, sessionId) {
   const state = readState(dataDir, sessionId);
   if (state.warned) return false;
-  writeState(dataDir, sessionId, { ...state, warned: true });
+  writeState(dataDir, sessionId, { ...state, sessionId, warned: true });
   return true;
 }
 

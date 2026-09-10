@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_BASE_URL } from "./constants.js";
+import { DEFAULT_BASE_URL, RECALL_DEADLINE_MS, RECALL_DEADLINE_MIN_MS, RECALL_DEADLINE_MAX_MS } from "./constants.js";
 
 /** A value that is absent or whitespace-only counts as unset and never shadows a lower layer. */
 function nonBlank(v) {
@@ -65,6 +65,13 @@ export function splitCommand(raw) {
   return out;
 }
 
+/** Clamp rather than reject: a nonsense value should not disable recall. */
+function boundedInt(raw, fallback, min, max) {
+  const parsed = Number.parseInt(String(raw ?? "").trim(), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
 function truthy(v) {
   return ["1", "true", "yes", "on"].includes(String(v ?? "").trim().toLowerCase());
 }
@@ -102,6 +109,12 @@ export function loadConfig(env = process.env) {
     startCmd: splitCommand(startCmdRaw),
     userId,
     projectIdOverride: resolve(env, "EVEROS_CC_PROJECT_ID", null, null, sources, "projectIdOverride"),
+    recallTimeoutMs: boundedInt(
+      env.EVEROS_CC_RECALL_TIMEOUT_MS,
+      RECALL_DEADLINE_MS,
+      RECALL_DEADLINE_MIN_MS,
+      RECALL_DEADLINE_MAX_MS,
+    ),
     verbose: truthy(env.EVEROS_CC_VERBOSE),
     debug: truthy(env.EVEROS_CC_DEBUG),
     dataDir,
