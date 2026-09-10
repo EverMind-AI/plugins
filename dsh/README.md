@@ -65,7 +65,7 @@ dsh plugin --profile web add .
 After the package is published:
 
 ```bash
-dsh plugin --profile web add @evermind-ai/dsh-plugin
+dsh plugin --profile web add @everos-ai/dsh-plugin
 ```
 
 The package declares `dsh.bundle.patch`, so a repository URL ending in
@@ -95,7 +95,7 @@ Every option can also be set in the plugin row of the DSH Cordis profile:
 
 ```yaml
 - id: everos-memory
-  name: '@evermind-ai/dsh-plugin'
+  name: '@everos-ai/dsh-plugin'
   config:
     baseUrl: http://127.0.0.1:8000
     apiVersion: auto
