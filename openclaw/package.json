@@ -1,5 +1,5 @@
 {
-  "name": "@evermind-ai/openclaw-plugin",
+  "name": "@everos-ai/openclaw-plugin",
   "version": "3.0.3",
   "description": "OpenClaw Memory — EverOS: native memory-slot plugin backed by the local EverOS framework.",
   "keywords": [

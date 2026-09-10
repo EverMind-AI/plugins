@@ -60,7 +60,7 @@ function fakeIo(opts: FakeIoOptions = {}): FakeIo {
 test("parseArgs: defaults", () => {
   const a = parseArgs([]);
   assert.ok(!("error" in a));
-  assert.equal(a.spec, "@evermind-ai/openclaw-plugin");
+  assert.equal(a.spec, "@everos-ai/openclaw-plugin");
   assert.equal(a.grant, undefined);
   assert.equal(a.acceptCapabilities, undefined);
   assert.equal(a.restart, true);
@@ -125,7 +125,7 @@ test("setup: happy path — install, granted via flag, EverOS already healthy, r
   assert.equal(code, 0);
   assert.ok(
     f.calls.some((c) =>
-      c.startsWith("openclaw plugins install @evermind-ai/openclaw-plugin --force --accept-capabilities"),
+      c.startsWith("openclaw plugins install @everos-ai/openclaw-plugin --force --accept-capabilities"),
     ),
   );
   assert.ok(

@@ -36,7 +36,7 @@ Good to know:
 Recommended install:
 
 ```bash
-npx --yes --package @evermind-ai/openclaw-plugin everos-setup
+npx --yes --package @everos-ai/openclaw-plugin everos-setup
 ```
 
 The installer will:
@@ -239,7 +239,7 @@ Recall injects up to four sections, all served by EverOS:
 ## Manual install
 
 ```bash
-openclaw plugins install @evermind-ai/openclaw-plugin --accept-capabilities
+openclaw plugins install @everos-ai/openclaw-plugin --accept-capabilities
 ```
 
 Then grant conversation access — **required, one time**. OpenClaw 2.0 blocks

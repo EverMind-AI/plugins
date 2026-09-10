@@ -36,7 +36,7 @@ EverOS 服务（`127.0.0.1:8000` 上的 `/api/v2/memory/*`）。
 推荐安装方式：
 
 ```bash
-npx --yes --package @evermind-ai/openclaw-plugin everos-setup
+npx --yes --package @everos-ai/openclaw-plugin everos-setup
 ```
 
 安装器会：
@@ -227,7 +227,7 @@ recall 最多注入四个部分，全部由 EverOS 提供：
 ## 手动安装
 
 ```bash
-openclaw plugins install @evermind-ai/openclaw-plugin --accept-capabilities
+openclaw plugins install @everos-ai/openclaw-plugin --accept-capabilities
 ```
 
 然后授予对话访问权限——**必须做，仅需一次**。OpenClaw 2.0 在未授权时，

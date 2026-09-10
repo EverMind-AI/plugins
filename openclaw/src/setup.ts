@@ -47,7 +47,7 @@ export interface SetupArgs {
 }
 
 export const PLUGIN_ID = "evermind-ai-everos";
-const DEFAULT_SPEC = "@evermind-ai/openclaw-plugin";
+const DEFAULT_SPEC = "@everos-ai/openclaw-plugin";
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
 /** Tested and install-enforced OpenClaw 2.0 host/plugin-API floor. */
 const MIN_OPENCLAW: readonly [number, number, number] = [2026, 8, 1];
