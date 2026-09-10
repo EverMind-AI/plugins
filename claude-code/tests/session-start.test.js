@@ -163,6 +163,25 @@ test("a reachable non-loopback EverOS says so, once, naming the host", async () 
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("SessionStart's warning is the session's one warning, and recall then stays quiet", async () => {
+  // Each hook is tested alone, so nothing caught that a dead EverOS warned
+  // twice at the top of a real session: once from SessionStart and again from
+  // the first recall. The README promises exactly one.
+  const dir = tmp();
+  try {
+    const env = {
+      EVEROS_CC_BASE_URL: "http://127.0.0.1:1", EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+      EVEROS_CC_START_CMD: "definitely-not-a-real-binary-xyz",
+    };
+    const start = await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", source: "startup" }, env);
+    assert.ok(start.json.systemMessage.includes("could not be started"), start.stdout);
+
+    const recall = await runHookScript("hooks/scripts/recall.js", { session_id: "s1", cwd: "/w", prompt: "which linter does this project use" }, env);
+    assert.equal(recall.stdout, "", "the session was already warned");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a non-loopback address is reported unreachable, never started", async () => {
   const dir = tmp();
   try {

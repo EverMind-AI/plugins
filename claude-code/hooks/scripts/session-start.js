@@ -4,7 +4,7 @@ import { runHook } from "./lib/hook-io.js";
 import { ensureEveros } from "./lib/provision.js";
 import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
-import { markFlushed, pendingFlushes } from "./lib/state.js";
+import { claimWarning, markFlushed, pendingFlushes } from "./lib/state.js";
 import { isLoopback } from "./lib/config.js";
 
 /**
@@ -93,7 +93,18 @@ runHook("SessionStart", async (input, ctx) => {
   const { config, debug } = ctx;
   const outcome = await ensureEveros(config);
   const logFile = path.join(config.dataDir, "everos-server.log");
+  const sessionId = input.session_id ?? "unknown";
   debug(`session start (${input.source ?? "unknown"}): ${outcome.status}`);
+
+  /**
+   * Spend the session's single warning here.
+   *
+   * The recall hook warns too, from the same budget, so without this a dead
+   * EverOS announced itself twice in the first two seconds of a session - once
+   * as "could not be started" and again as "unreachable". Only the terminal
+   * failures claim it; "starting" is not one, because memory may well arrive.
+   */
+  const warnOnce = (message) => (claimWarning(config.dataDir, sessionId) ? { systemMessage: message } : undefined);
 
   if (outcome.status === "healthy" || outcome.status === "started") {
     const cwd = input.cwd ?? process.cwd();
@@ -115,10 +126,10 @@ runHook("SessionStart", async (input, ctx) => {
     case "starting":
       return { systemMessage: `⏳ EverOS is starting in the background; memory resumes once it is up. Log: ${logFile}` };
     case "no-start-cmd":
-      return { systemMessage: `⚠️ EverOS unreachable at ${config.baseUrl} and no start command is set — memory is off. Run /everos:status.` };
+      return warnOnce(`⚠️ EverOS unreachable at ${config.baseUrl} and no start command is set — memory is off. Run /everos:status.`);
     case "spawn-failed":
-      return { systemMessage: `⚠️ EverOS could not be started (${outcome.detail}) — memory is off. Run /everos:status.` };
+      return warnOnce(`⚠️ EverOS could not be started (${outcome.detail}) — memory is off. Run /everos:status.`);
     default:
-      return { systemMessage: `⚠️ EverOS unreachable at ${config.baseUrl} — memory is off. Run /everos:status.` };
+      return warnOnce(`⚠️ EverOS unreachable at ${config.baseUrl} — memory is off. Run /everos:status.`);
   }
 });
