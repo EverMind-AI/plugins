@@ -13,17 +13,17 @@ const EMPTY_SEARCH = {
  */
 export async function startFakeEveros(options = {}) {
   const requests = [];
-  let healthBody = options.health ?? {
+  const healthBody = options.health ?? {
     status: "ok",
     version: "1.3.1",
     capabilities: { llm: true, embed: true, rerank: true, multimodal_llm: false, parser: false },
     disabled_features: [],
     cascade: { healthy: true, pending: 0 },
   };
-  let searchFn = options.searchFn ?? (() => EMPTY_SEARCH);
+  const searchFn = options.searchFn ?? (() => EMPTY_SEARCH);
   let addStatus = options.addStatus ?? 200;
-  let flushStatus = options.flushStatus ?? 200;
-  let stall = options.stall ?? false;
+  const flushStatus = options.flushStatus ?? 200;
+  const stall = options.stall ?? false;
 
   const server = createServer((req, res) => {
     let raw = "";
@@ -72,13 +72,8 @@ export async function startFakeEveros(options = {}) {
     baseUrl: `http://127.0.0.1:${port}`,
     requests,
     only(path) { return requests.filter((r) => r.path === path); },
-    setHealth(body) { healthBody = body; },
-    setSearch(fn) { searchFn = fn; },
     setAddStatus(s) { addStatus = s; },
-    setFlushStatus(s) { flushStatus = s; },
-    setStall(v) { stall = v; },
     close() { return new Promise((resolve) => server.close(resolve)); },
   };
 }
 
-export { EMPTY_SEARCH };

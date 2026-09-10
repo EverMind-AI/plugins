@@ -60,10 +60,13 @@ install documentation is written for the checkout case first.
 | D5 | Partitioning | Per project: `project_id` = repository name | Mirrors OpenClaw (`workspaceDir` basename). All worktrees of one repository share memory (see §5). |
 | D6 | Auto-start | Detect, then spawn a detached `everos server start`; wait up to 5 s | Accepted trade-off: the spawned server is an orphan process that outlives the hook and the Claude Code session. EverOS's OME single-instance lock makes concurrent spawns from several windows harmless. |
 | D7 | Configuration | `EVEROS_CC_*` env > Claude Code `userConfig` > defaults; no plugin-owned file | `userConfig` is the host-native slot (Claude Code prompts on enable, stores in `~/.claude/settings.json`, exports `CLAUDE_PLUGIN_OPTION_*` to hooks). Same precedence as OpenClaw's `plugins.entries.<id>.config`. |
-| D8 | Recall latency | 3 s shared deadline for both searches; hook timeout 10 s | Every prompt pays this. OpenClaw's 5 s is for chat, not for a terminal the user is typing into. |
+| D8 | Recall latency | 5 s shared deadline for both searches, `EVEROS_CC_RECALL_TIMEOUT_MS` to change it; hook timeout 10 s | Planned at 3 s to protect typing latency, **raised after live runs**: two of the first three real sessions lost their opening recall to that budget. A warm search is 0.3-0.8 s so the budget is almost never spent, and a recall that times out costs the whole feature for that turn while a slow one costs a moment. |
 | D9 | User-visible output | Recall hit line when hits > 0; warning line when EverOS is down; nothing on Stop | Shows value without a line per turn. Silent memory loss is the failure mode the OpenClaw handoff warns about most. |
 | D10 | Seal points | `SessionEnd` and `PreCompact`; no periodic flush | Periodic flush would fight EverOS's own topic-boundary detection. Compaction is a natural boundary. |
 | D11 | Turn dedupe | `prompt_id` from hook stdin, state under `${CLAUDE_PLUGIN_DATA}` | `Stop` can fire twice for one prompt (interrupt, resume). EverOS's buffer does not dedupe. |
+| D13 | Cold first recall | SessionStart fires one throwaway search to warm the path | The session's first prompt is where memory matters most and where the cold cost landed. This hook has a 15 s budget and nobody waiting on it. |
+| D14 | Unsealed sessions | A later session seals any session untouched for 10 minutes, under the project id it ran in | Claude Code cancels `SessionEnd` when the host exits in a hurry, routine under `claude -p`, stranding the turns after the last topic boundary. Self-healing beats a guarantee we cannot make. |
+| D15 | Case rendering | Inject `task_intent` + `key_insight`, not `approach`; cap every rendered line at 300 chars | A real case's `approach` is a numbered walkthrough over 1500 characters. At prompt time the distilled lesson helps; `/everos:search` is where the detail belongs. |
 | D12 | Prompt-injection story | Port OpenClaw `render` verbatim | Fenced `<everos_memory>` block, "untrusted historical data" label, fence-token neutralisation, position-0 strip before capture. Do not reinvent. |
 
 ## 3. Architecture
@@ -113,8 +116,8 @@ Plugins/
     │           ├── state.js               # per-session dedupe file
     │           └── provision.js           # health probe, detached spawn
     ├── skills/
-    │   ├── everos-status/SKILL.md
-    │   └── everos-search/SKILL.md
+    │   ├── status/SKILL.md               # invoked as /everos:status
+    │   └── search/SKILL.md               # invoked as /everos:search
     ├── scripts/
     │   ├── status.js                      # used by the status skill
     │   ├── search.js                      # used by the search skill
@@ -211,6 +214,19 @@ sequenceDiagram
    memory resumes when it is up` / `⚠️ EverOS unreachable at <base_url>; run
    /everos:status`. Never blocks the session.
 
+5. Once the server answers, run one throwaway `/search` (5 s budget) to warm
+   the path, so the session's first prompt is not the one that pays the cold
+   cost. Failure is not reported; whether memory works is what the recall hook
+   will say.
+6. Seal any session left untouched for 10 minutes and never flushed, using the
+   `project_id` recorded with that session rather than this one's — the
+   abandoned session may have run in a different repository. At most 5 per
+   start, and the sweep stops at the first error rather than hammering a sick
+   server.
+
+Budget arithmetic against the 15 s hook timeout: health 2 s + start wait 5 s +
+warm-up 5 s leaves 3 s of margin.
+
 Not loopback ⇒ never spawn; report unreachable only. A second window
 spawning concurrently is rejected by EverOS's OME lock and exits; the first
 instance serves both.
@@ -240,10 +256,15 @@ instance serves both.
 
 1. Read stdin: `session_id`, `prompt_id`, `transcript_path`, `cwd`.
 2. `lib/state.js`: if `prompt_id` is already recorded for this session, exit.
-3. `lib/transcript.js`: read the JSONL; the turn is every entry from the
-   `type: "user"` entry whose `promptId` equals `prompt_id` to end of file,
-   skipping `isSidechain: true` entries. Retry the read 5 × 100 ms if the
-   file has not yet been fully written.
+3. `lib/transcript.js`: read the JSONL; the turn runs from the **first** entry
+   whose `promptId` equals `prompt_id` to the entry before the next differing
+   `promptId`, skipping `isSidechain: true` entries. Every entry in a turn
+   repeats that id and assistant entries carry none, so the first match is the
+   start; the upper bound matters because a prompt queued mid-turn is already
+   on disk when Stop fires. Retry until the turn reads as finished — its last
+   conversational entry is an `assistant` entry — for up to 2 s, because the
+   closing entry lands a fraction of a second after Stop. An interrupted turn
+   never gets that entry, so the last attempt captures whatever is there.
 4. Map to EverOS messages (§7). Drop the turn if it yields no message.
 5. `POST /add` in batches of ≤ 500 messages, sequentially. Response `status`
    is ignored beyond success (`accumulated` and `extracted` are both fine).
@@ -270,7 +291,9 @@ top-level entries. User entries additionally carry `promptId`.
 
 | Transcript | EverOS message |
 |---|---|
-| `user` entry, `text` blocks (or string content) | `{role: "user", sender_id: <user_id>, content: <text joined by "\n\n">}`; a leading `<everos_memory>…</everos_memory>` block is stripped first (self-ingestion guard) |
+| `user` entry carrying a `promptSource` (a real prompt: `typed` in a terminal, `sdk` from the IDE) | `{role: "user", sender_id: <user_id>, content: <text joined by "\n\n">}`; a leading `<everos_memory>…</everos_memory>` block is stripped first (self-ingestion guard) |
+| `user` entry with neither `promptSource` nor `tool_result` blocks — skill-body injections (`isMeta`), slash-command scaffolding, caveat preambles | dropped; the user never wrote it |
+| consecutive `assistant` entries sharing a `requestId` | merged into one message, so its `tool_calls` array precedes the matching `tool` messages. Claude Code splits one API turn into one entry per block, and parallel tool calls arrive as several `tool_use` entries under one id |
 | `assistant` entry, `text` blocks | `{role: "assistant", sender_id: "claude-code", content: <text>}` |
 | `assistant` entry, `tool_use` blocks | appended to the same assistant message as `tool_calls: [{id, type: "function", function: {name, arguments: JSON.stringify(input)}}]`; `content` may be `""` |
 | `user` entry, `tool_result` blocks | one `{role: "tool", sender_id: "claude-code", tool_call_id: <tool_use_id>, content: <text>}` per block; `is_error` ⇒ content prefixed `[tool error] ` |
@@ -300,6 +323,8 @@ unset and never shadow a lower layer.
 | `EVEROS_CC_START_CMD` | — | `everos server start` | Quote-aware argv split; e.g. `uv run everos server start` |
 | `EVEROS_CC_USER_ID` | — | OS user | user track identity |
 | `EVEROS_CC_PROJECT_ID` | — | derived (§5) | force one project id (e.g. for global memory) |
+| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | recall budget, clamped to 500-9000; a nonsense value falls back rather than disabling recall |
+| `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`, else `~/.everos/.claude-code` | per-session state, `debug.log`, `everos-server.log` |
 | `EVEROS_CC_VERBOSE` | — | `0` | also print recall-miss / save lines |
 | `EVEROS_CC_DEBUG` | — | `0` | write diagnostics to `${CLAUDE_PLUGIN_DATA}/debug.log` |
 
@@ -307,7 +332,8 @@ Only `base_url` and `everos_dir` are declared in `plugin.json` `userConfig`,
 so enabling the plugin asks two questions, both answerable with Enter.
 
 Non-configurable constants: `APP_ID = "claude-code"`, `AGENT_ID =
-"claude-code"`, health probe 2 s, start wait 5 s, recall deadline 3 s, 5
+"claude-code"`, health probe 2 s, start wait 5 s, recall deadline 5 s (configurable), warm-up 5 s, abandoned-session threshold
+10 min, 5
 items per rendered section, id clip 128, `/add` batch 500, tool-result guard
 20 000 chars, query clip 500 chars.
 
@@ -318,7 +344,7 @@ items per rendered section, id clip 128, `/add` batch 500, tool-result guard
   ABI and carries only the documented JSON.
 - Network errors, non-2xx, non-JSON bodies ⇒ swallowed per call. Recall
   tracks fail independently.
-- Deadlines are enforced inside the script (3 s recall, 20 s capture,
+- Deadlines are enforced inside the script (5 s recall, 20 s capture,
   10 s flush) and are always shorter than the `hooks.json` timeout so the
   host never kills us mid-write.
 - No retries in v1. Rationale (OpenClaw handoff): a 5xx on `/add` may have

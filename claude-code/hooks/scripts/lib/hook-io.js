@@ -18,7 +18,7 @@ function readStdin() {
   });
 }
 
-export function debugLog(config, eventName, message) {
+function debugLog(config, eventName, message) {
   if (!config?.debug) return;
   try {
     const file = path.join(config.dataDir, "debug.log");

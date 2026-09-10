@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn as nodeSpawn } from "node:child_process";
-import { setTimeout as sleepFor } from "node:timers/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { createClient, deadline } from "./everos.js";
 import { isLoopback } from "./config.js";
 import { HEALTH_TIMEOUT_MS, START_WAIT_MS, START_POLL_MS } from "./constants.js";
@@ -18,8 +18,7 @@ export function portFromUrl(baseUrl) {
 
 export async function probeHealth(baseUrl, deps = {}) {
   try {
-    const client = (deps.createClient ?? createClient)({ baseUrl, fetchImpl: deps.fetchImpl });
-    return await client.health(deadline(deps.healthTimeoutMs ?? HEALTH_TIMEOUT_MS));
+    return await createClient({ baseUrl }).health(deadline(deps.healthTimeoutMs ?? HEALTH_TIMEOUT_MS));
   } catch {
     return null;
   }
@@ -40,7 +39,7 @@ function openLog(dataDir) {
  * the session; EverOS's own single-instance lock keeps a second window from
  * starting a competing one.
  */
-export function spawnEveros(config, deps = {}) {
+function spawnEveros(config, deps = {}) {
   const spawnImpl = deps.spawn ?? nodeSpawn;
   const [command, ...args] = config.startCmd ?? [];
   if (!command) return null;
@@ -85,10 +84,8 @@ export async function ensureEveros(config, deps = {}) {
 
   const waitMs = deps.startWaitMs ?? START_WAIT_MS;
   const pollMs = deps.startPollMs ?? START_POLL_MS;
-  const sleep = deps.sleep ?? sleepFor;
-  const now = deps.now ?? Date.now;
-  const until = now() + waitMs;
-  while (now() < until) {
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
     await sleep(pollMs);
     // Health first: a foreign instance may have won the OME lock and be serving,
     // in which case our own child dying is the correct outcome, not a failure.
