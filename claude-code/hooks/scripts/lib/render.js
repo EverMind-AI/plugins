@@ -9,6 +9,12 @@ const UNTRUSTED_NOTICE =
 const FACTS_PER_EPISODE = 3;
 const PROFILE_EXPLICIT_MAX = 8;
 const PROFILE_TRAITS_MAX = 4;
+/**
+ * Per-line character cap. This block is injected ahead of every prompt, so a
+ * single verbose memory must not be able to spend the user's context on its own.
+ * Worst case with every section full stays under ~9k characters.
+ */
+const ITEM_MAX_CHARS = 300;
 
 /**
  * Rewrite any fence token inside recalled content to an inert bracketed form.
@@ -22,12 +28,15 @@ export function neutralizeFenceTokens(s) {
   return String(s ?? "").replace(/<(\/?)everos_memory>/gi, "[$1everos_memory]");
 }
 
-function oneLine(s) {
-  return neutralizeFenceTokens(String(s ?? "").replace(/\s+/g, " ").trim());
+function oneLine(s, max = ITEM_MAX_CHARS) {
+  const flat = neutralizeFenceTokens(String(s ?? "").replace(/\s+/g, " ").trim());
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 }
 
 function joinDash(...parts) {
-  return parts.map(oneLine).filter(Boolean).join(" — ");
+  // Arrow, not a bare reference: Array.map passes the index as the second
+  // argument, which oneLine would read as its character cap.
+  return parts.map((part) => oneLine(part)).filter(Boolean).join(" — ");
 }
 
 function renderEpisode(item) {
@@ -60,8 +69,13 @@ function renderProfile(item) {
   return lines.length ? lines.join("\n") : null;
 }
 
+/**
+ * Intent and insight only. The `approach` field is a numbered walkthrough that
+ * runs past a thousand characters in real data; at prompt time the distilled
+ * lesson is what helps, and /everos:search is where the full detail belongs.
+ */
 function renderCase(item) {
-  const head = joinDash(item.task_intent, item.approach);
+  const head = oneLine(item.task_intent);
   if (!head) return null;
   const insight = oneLine(item.key_insight);
   return insight ? `- ${head}\n  · ${insight}` : `- ${head}`;
