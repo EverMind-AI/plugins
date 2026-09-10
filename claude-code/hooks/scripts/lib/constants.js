@@ -15,12 +15,15 @@ export const START_POLL_MS = 500;
  * Recall budget. A warm search is 0.3-0.8s, so this is almost never spent; what
  * it buys is the tail. Two of the first three live sessions lost their opening
  * recall to a 3s budget, and a timed-out recall costs the whole feature for that
- * turn while a slow one costs a moment. Override with EVEROS_CC_RECALL_TIMEOUT_MS;
- * it must stay under the 10s UserPromptSubmit hook timeout in hooks.json.
+ * turn while a slow one costs a moment. Override with EVEROS_CC_RECALL_TIMEOUT_MS.
+ *
+ * The maximum is 7s, not 10s: resolving the project id runs up to two git
+ * subprocesses at 1s each BEFORE this deadline starts, and the whole hook must
+ * finish inside the 10s UserPromptSubmit timeout in hooks.json.
  */
 export const RECALL_DEADLINE_MS = 5000;
 export const RECALL_DEADLINE_MIN_MS = 500;
-export const RECALL_DEADLINE_MAX_MS = 9000;
+export const RECALL_DEADLINE_MAX_MS = 7000;
 export const CAPTURE_DEADLINE_MS = 20000;
 export const FLUSH_DEADLINE_MS = 10000;
 

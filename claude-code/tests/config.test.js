@@ -74,7 +74,7 @@ test("the recall timeout defaults to 5s and is clamped, never disabled", () => {
   assert.equal(loadConfig({ ...base }).recallTimeoutMs, 5000);
   assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "2500" }).recallTimeoutMs, 2500);
   assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "0" }).recallTimeoutMs, 500);
-  assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "999999" }).recallTimeoutMs, 9000);
+  assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "999999" }).recallTimeoutMs, 7000);
   assert.equal(loadConfig({ ...base, EVEROS_CC_RECALL_TIMEOUT_MS: "nonsense" }).recallTimeoutMs, 5000);
 });
 

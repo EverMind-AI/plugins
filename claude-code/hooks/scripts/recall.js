@@ -4,7 +4,7 @@ import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { shouldRecall, buildQuery } from "./lib/query.js";
 import { render, summaryLine } from "./lib/render.js";
-import { claimWarning } from "./lib/state.js";
+import { claimWarning, touchSession } from "./lib/state.js";
 
 
 runHook("UserPromptSubmit", async (input, ctx) => {
@@ -17,6 +17,9 @@ runHook("UserPromptSubmit", async (input, ctx) => {
 
   const sessionId = input.session_id ?? "unknown";
   const identity = resolveIdentity(input.cwd ?? process.cwd(), config);
+  // Proof of life for the abandoned-session sweep: a long agentic turn captures
+  // nothing for minutes, but a prompt means somebody is still here.
+  touchSession(config.dataDir, sessionId, identity.projectId);
   const client = createClient({ baseUrl: config.baseUrl });
   const query = buildQuery(prompt);
   // One signal for both tracks: the user pays this latency on every prompt.

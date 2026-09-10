@@ -101,11 +101,13 @@ What coffee do I like?
 | EverOS 字段 | 取值 | 如何确定 |
 |---|---|---|
 | `app_id` | `claude-code` | 固定。 |
-| `project_id` | 仓库名 | `git config --get remote.origin.url` 的最后一段去掉 `.git`；否则 git 顶层目录名；否则当前目录名。可用 `EVEROS_CC_PROJECT_ID` 覆盖。 |
+| `project_id` | 主机 + owner + 仓库名 | `git config --get remote.origin.url` 的最后三段拼接，例如 `github.com_EverMind-AI_Plugins`；否则 git 顶层目录名；否则当前目录名。可用 `EVEROS_CC_PROJECT_ID` 覆盖。 |
 | `user_id` | 你的系统用户 | `$USER`、`$USERNAME`、系统账号。可用 `EVEROS_CC_USER_ID` 覆盖。 |
 | `agent_id` | `claude-code` | 固定。 |
 
-优先用 remote 名，是为了让同一仓库的多个 worktree（`repo`、`repo-a`、`repo-b`）共用一份记忆，而不是分成三份。
+优先用 remote，是为了让同一仓库的多个 worktree（`repo`、`repo-a`、`repo-b`）共用一份记忆，而不是分成三份；同一个仓库的 ssh / https、带不带 `.git` 的各种 clone 地址也都会归到同一个 id。
+
+之所以带上主机和 owner：光有仓库名不构成命名空间。两个不同 owner 的 `api` 仓库很常见，只用仓库名的话它们会互相读到对方的决策。
 
 落盘结构：
 
@@ -127,7 +129,7 @@ What coffee do I like?
 | `EVEROS_CC_START_CMD` | — | `everos server start` | 支持引号，例如 `uv run everos server start`。 |
 | `EVEROS_CC_USER_ID` | — | 系统用户 | 个人记忆的身份。 |
 | `EVEROS_CC_PROJECT_ID` | — | 自动推断 | 强制指定分区。 |
-| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | 两路召回搜索的总预算，取值被限制在 500–9000。 |
+| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | 两路召回搜索的总预算，取值被限制在 500–7000；推断 project_id 会在这个预算开始前先花掉 hook 那 10 秒里的至多 2 秒。 |
 | `EVEROS_CC_VERBOSE` | — | 关 | 额外打印「没有相关记忆」和「已保存 N 条消息」。 |
 | `EVEROS_CC_DEBUG` | — | 关 | 把 hook 诊断信息写入数据目录下的 `debug.log`。 |
 | `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`，否则 `~/.everos/.claude-code` | 会话状态、`debug.log`、`everos-server.log` 的位置。 |

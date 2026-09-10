@@ -125,12 +125,17 @@ OpenClaw's and Hermes's by `app_id`, and from your other repositories by
 | EverOS field | Value | How it is chosen |
 |---|---|---|
 | `app_id` | `claude-code` | Fixed. |
-| `project_id` | the repository name | `git config --get remote.origin.url` → last path segment without `.git`; else the git toplevel directory name; else the directory name. Override with `EVEROS_CC_PROJECT_ID`. |
+| `project_id` | host, owner and repository | `git config --get remote.origin.url` → the last three segments joined, e.g. `github.com_EverMind-AI_Plugins`; else the git toplevel directory name; else the directory name. Override with `EVEROS_CC_PROJECT_ID`. |
 | `user_id` | your OS user | `$USER`, `$USERNAME`, then the OS account. Override with `EVEROS_CC_USER_ID`. |
 | `agent_id` | `claude-code` | Fixed. |
 
-The remote name comes first so that worktrees of one repository (`repo`,
-`repo-a`, `repo-b`) share one memory rather than three.
+The remote comes first so that worktrees of one repository (`repo`, `repo-a`,
+`repo-b`) share one memory rather than three, and every clone URL of a
+repository — ssh, https, with or without `.git` — resolves to the same id.
+
+Host and owner are part of it because a bare repository name is not a
+namespace: two `api` repositories from different owners are ordinary, and
+under a bare name they would read each other's decisions.
 
 On disk:
 
@@ -155,7 +160,7 @@ whitespace-only value counts as unset and never shadows a lower layer.
 | `EVEROS_CC_START_CMD` | — | `everos server start` | Quote-aware; e.g. `uv run everos server start`. |
 | `EVEROS_CC_USER_ID` | — | your OS user | Identity for personal memory. |
 | `EVEROS_CC_PROJECT_ID` | — | derived | Force one partition. |
-| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | Budget for the two recall searches. Clamped to 500–9000. |
+| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | Budget for the two recall searches. Clamped to 500–7000; resolving the project id spends up to 2 s of the hook's 10 s before this starts. |
 | `EVEROS_CC_VERBOSE` | — | off | Also print "no relevant memory" and "saved N messages". |
 | `EVEROS_CC_DEBUG` | — | off | Write hook diagnostics to `debug.log` in the data directory. |
 | `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`, else `~/.everos/.claude-code` | Where per-session state, `debug.log` and `everos-server.log` live. |

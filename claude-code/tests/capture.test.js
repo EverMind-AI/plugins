@@ -62,12 +62,47 @@ test("a failed post is not marked stored, so the next Stop retries it", async ()
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a batch that fails after an earlier one succeeded is not re-sent whole", async () => {
+  // Batches share one deadline. If batch 1 committed and batch 2 did not, a
+  // retry would re-post batch 1 - and EverOS assigns message ids server-side,
+  // so it cannot dedupe them. A truncated tail beats 500 duplicated messages.
+  const server = await startFakeEveros();
+  const dir = tmp();
+  const big = path.join(dir, "big.jsonl");
+  const lines = [JSON.stringify({ type: "user", isSidechain: false, promptId: "p", promptSource: "typed", timestamp: "2026-09-10T10:00:00.000Z", message: { role: "user", content: "start" } })];
+  for (let i = 0; i < 700; i += 1) {
+    lines.push(JSON.stringify({ type: "assistant", isSidechain: false, requestId: `r${i}`, timestamp: `2026-09-10T10:00:${String(i % 60).padStart(2, "0")}.000Z`, message: { role: "assistant", content: [{ type: "text", text: `line ${i}` }] } }));
+  }
+  fs.writeFileSync(big, lines.join("\n"));
+  try {
+    let calls = 0;
+    server.setAddHandler(() => { calls += 1; return calls === 1 ? "ok" : "fail"; });
+    await runHookScript(SCRIPT, { session_id: "s1", prompt_id: "p", transcript_path: big, cwd: "/w" }, envFor(server, dir));
+    assert.equal(server.only("/api/v2/memory/add").length, 2, "both batches attempted");
+    assert.equal(isStored(readState(dir, "s1"), "p"), true, "must not offer the committed batch for a retry");
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("an unknown prompt id posts nothing", async () => {
   const server = await startFakeEveros();
   const dir = tmp();
   try {
     await runHookScript(SCRIPT, { ...stdin, prompt_id: "no-such" }, envFor(server, dir));
     assert.equal(server.only("/api/v2/memory/add").length, 0);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a Stop without a prompt id falls back to the last turn in the transcript", async () => {
+  // Claude Code documents prompt_id as optional. Without a fallback, capture
+  // would be a total no-op with nothing to show for it.
+  const server = await startFakeEveros();
+  const dir = tmp();
+  try {
+    const { code } = await runHookScript(SCRIPT, { session_id: "s1", transcript_path: FIXTURE, cwd: "/w", hook_event_name: "Stop" }, envFor(server, dir));
+    assert.equal(code, 0);
+    const adds = server.only("/api/v2/memory/add");
+    assert.equal(adds.length, 1);
+    assert.deepEqual(adds[0].body.messages.map((m) => m.role), ["user", "assistant", "tool", "tool", "assistant"]);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

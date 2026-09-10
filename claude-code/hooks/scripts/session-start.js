@@ -5,15 +5,21 @@ import { ensureEveros } from "./lib/provision.js";
 import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { markFlushed, pendingFlushes } from "./lib/state.js";
-import { FLUSH_DEADLINE_MS } from "./lib/constants.js";
 
 /**
  * How long a session must sit untouched before another session may seal it.
- * Long enough that a session merely idling in another window is never sealed
- * underneath it, short enough that the tail is not stranded for a working day.
+ * Recall touches the session on every prompt, so this is thirty minutes of no
+ * prompts, not thirty minutes of no captures. Long enough that a live session
+ * is never sealed underneath it, short enough that the tail is not stranded.
  */
-const ABANDONED_AFTER_MS = 10 * 60 * 1000;
+const ABANDONED_AFTER_MS = 30 * 60 * 1000;
 const SWEEP_MAX_SESSIONS = 5;
+/**
+ * One budget for the whole sweep, not one per session. `/flush` runs real
+ * boundary detection, so a few seconds each is normal, and five sequential
+ * flushes at the 10s per-call deadline would be 50s against a 15s hook timeout.
+ */
+const SWEEP_BUDGET_MS = 6000;
 
 // Budget arithmetic against the 15s SessionStart timeout in hooks.json:
 // health probe 2s + start wait 5s + this 5s still leaves 3s of margin.
@@ -60,19 +66,24 @@ async function sweepAbandoned(config, cwd, debug) {
   if (abandoned.length === 0) return;
   const identity = resolveIdentity(cwd, config);
   const client = createClient({ baseUrl: config.baseUrl });
+  const signal = deadline(SWEEP_BUDGET_MS);
   for (const { sessionId, projectId } of abandoned) {
+    if (signal.aborted) {
+      debug("sweep budget spent; the rest wait for the next session");
+      return;
+    }
     try {
       await client.flush(
         // The recorded project, not this session's: the abandoned session may
         // have belonged to a different repository.
         { session_id: sessionId, app_id: identity.appId, project_id: projectId ?? identity.projectId },
-        deadline(FLUSH_DEADLINE_MS),
+        signal,
       );
       markFlushed(config.dataDir, sessionId);
       debug(`sealed abandoned session ${sessionId}`);
     } catch (error) {
       debug(`could not seal ${sessionId}: ${error.message}`);
-      return; // the server is unwell; do not hammer it with the rest
+      return; // out of budget, or the server is unwell; either way, stop
     }
   }
 }

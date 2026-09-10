@@ -153,15 +153,20 @@ returns nothing.
 | EverOS field | Value | Source / override |
 |---|---|---|
 | `app_id` | `claude-code` (constant) | Cross-host partition; not configurable. |
-| `project_id` | Repository name | 1. `git remote get-url origin` → last path segment without `.git`; 2. else `git rev-parse --show-toplevel` basename; 3. else `cwd` basename. Sanitised to `^[a-zA-Z0-9_.@+-]+$` (others → `_`), `.`/`..` rejected, clipped to 128, fallback `default`. Override: `EVEROS_CC_PROJECT_ID`. Resolved once per hook from stdin `cwd`. |
+| `project_id` | Host, owner and repository | 1. `git config --get remote.origin.url` → the last three segments joined (`github.com_EverMind-AI_Plugins`); 2. else `git rev-parse --show-toplevel` basename; 3. else `cwd` basename. Sanitised to `^[a-zA-Z0-9_.@+-]+$` (others → `_`), `.`/`..` rejected, clipped to 128, fallback `default`. Override: `EVEROS_CC_PROJECT_ID`. Resolved once per hook from stdin `cwd`. |
 | `sender_id` (role `user`) = `user_id` | `$USER` → `$USERNAME` → `os.userInfo().username` | Override: `EVEROS_CC_USER_ID`. Unset ⇒ user track disabled with a warning (OpenClaw behaviour). |
 | `sender_id` (role `assistant`/`tool`) = `agent_id` | `claude-code` (constant) | Cases and skills land in `agents/claude-code/` under the project. |
 | `session_id` | Claude Code `session_id` from stdin, clipped to 128 | Buffer key only, not a directory. |
 
 Rule 1 for `project_id` exists because of worktree slots (`~/EverOS`,
 `~/EverOS-a`, `~/EverOS-b`): decisions made in one slot must be recalled in
-the others. The remote name is more stable than the main worktree's directory
-name.
+the others. The remote is more stable than the main worktree's directory name,
+and every clone URL of a repository normalises to the same id.
+
+Host and owner are part of the id because the bare repository name is not a
+namespace. Two `api` repositories from different owners are ordinary, and
+under a bare name they would share one partition — each reading the other's
+decisions into its prompts, and a hostile clone able to write into yours.
 
 On-disk result: `<root>/claude-code/<project_id>/users/<user_id>/` and
 `<root>/claude-code/<project_id>/agents/claude-code/`.

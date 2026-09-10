@@ -31,12 +31,33 @@ export function readState(dataDir, sessionId) {
   }
 }
 
+/**
+ * Write via a temporary file and rename. Two Claude Code windows share this
+ * directory, and the sweep in one can write another's file: a reader must never
+ * see a half-written document, and a lost update means a turn is captured twice.
+ */
 function writeState(dataDir, sessionId, state) {
   const file = statePath(dataDir, sessionId);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(state), { mode: 0o600 });
-  // writeFileSync only applies mode when creating; enforce it for pre-existing files.
-  fs.chmodSync(file, 0o600);
+  const temp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
+  // writeFileSync only applies mode when creating; enforce it either way.
+  fs.chmodSync(temp, 0o600);
+  fs.renameSync(temp, file);
+}
+
+/**
+ * Mark the session as alive, right now.
+ *
+ * pendingFlushes uses the file's mtime to tell an abandoned session from a live
+ * one, but the file is otherwise written only when a turn is CAPTURED. A single
+ * agentic turn can run for many minutes without one, and the sweep would then
+ * force a topic boundary into the middle of a live session. Recall calls this on
+ * every prompt so the mtime tracks activity rather than captures.
+ */
+export function touchSession(dataDir, sessionId, projectId = null) {
+  const state = readState(dataDir, sessionId);
+  writeState(dataDir, sessionId, { ...state, sessionId, projectId: projectId ?? state.projectId });
 }
 
 export function isStored(state, promptId) {

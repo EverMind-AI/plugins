@@ -27,7 +27,12 @@ export async function probeHealth(baseUrl, deps = {}) {
 function openLog(dataDir) {
   try {
     fs.mkdirSync(dataDir, { recursive: true });
-    return fs.openSync(path.join(dataDir, "everos-server.log"), "a");
+    // 0600: this captures the stderr of a server launched with the user's
+    // environment, so it is not something to leave world-readable.
+    const file = path.join(dataDir, "everos-server.log");
+    const fd = fs.openSync(file, "a", 0o600);
+    fs.chmodSync(file, 0o600);
+    return fd;
   } catch {
     return "ignore";
   }

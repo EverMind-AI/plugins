@@ -21,7 +21,9 @@ function defaultGitRunner(args, cwd) {
   try {
     const out = execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
-      timeout: 2000,
+      // Two of these run before the recall deadline even starts, so they are
+      // part of the UserPromptSubmit hook's 10s budget, not extra to it.
+      timeout: 1000,
       stdio: ["ignore", "pipe", "ignore"],
     });
     const trimmed = out.trim();
@@ -31,11 +33,27 @@ function defaultGitRunner(args, cwd) {
   }
 }
 
-/** Last path segment of a git remote URL, with any .git suffix removed. */
+/**
+ * Turn a git remote URL into host + owner + repo.
+ *
+ * The bare repository name is not a namespace. Two `api` repositories from
+ * different owners are ordinary, and under a bare name they would share one
+ * memory partition - each reading the other's decisions back into its prompts.
+ * Every remote form collapses to the same id so a worktree cloned over ssh and
+ * one cloned over https still share memory:
+ *
+ *   git@github.com:acme/api.git      ┐
+ *   https://github.com/acme/api.git  ├─▶ github.com_acme_api
+ *   ssh://git@github.com/acme/api    ┘
+ */
 function repoNameFromRemote(url) {
-  const withoutSuffix = url.replace(/\.git\/?$/, "");
-  const segments = withoutSuffix.split(/[/:]/).filter(Boolean);
-  return segments.length ? segments[segments.length - 1] : null;
+  const withoutSuffix = url.trim().replace(/\.git\/?$/, "");
+  const withoutScheme = withoutSuffix.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const withoutUser = withoutScheme.replace(/^[^/@]+@/, "");
+  const segments = withoutUser.split(/[/:]/).filter(Boolean);
+  if (segments.length === 0) return null;
+  // Host plus the last two path segments: enough to be unique, short enough to read.
+  return segments.slice(-3).join("_");
 }
 
 /**

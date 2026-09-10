@@ -22,7 +22,9 @@ export async function startFakeEveros(options = {}) {
   };
   const searchFn = options.searchFn ?? (() => EMPTY_SEARCH);
   let addStatus = options.addStatus ?? 200;
+  let addHandler = null;
   const flushStatus = options.flushStatus ?? 200;
+  const flushDelayMs = options.flushDelayMs ?? 0;
   const stall = options.stall ?? false;
 
   const server = createServer((req, res) => {
@@ -54,11 +56,13 @@ export async function startFakeEveros(options = {}) {
         }
       }
       if (path === "/api/v2/memory/add") {
+        if (addHandler && addHandler(body) === "fail") return fail(500, "INTERNAL_ERROR");
         if (addStatus !== 200) return fail(addStatus, "INTERNAL_ERROR");
         return send(200, { request_id: "0".repeat(32), data: { message_count: body?.messages?.length ?? 0, status: "accumulated" } });
       }
       if (path === "/api/v2/memory/flush") {
         if (flushStatus !== 200) return fail(flushStatus, "INTERNAL_ERROR");
+        if (flushDelayMs) await new Promise((r) => setTimeout(r, flushDelayMs));
         return send(200, { request_id: "0".repeat(32), data: { status: "extracted" } });
       }
       return fail(404, "NOT_FOUND");
@@ -73,6 +77,7 @@ export async function startFakeEveros(options = {}) {
     requests,
     only(path) { return requests.filter((r) => r.path === path); },
     setAddStatus(s) { addStatus = s; },
+    setAddHandler(fn) { addHandler = fn; },
     close() { return new Promise((resolve) => server.close(resolve)); },
   };
 }

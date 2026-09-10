@@ -24,6 +24,8 @@ function debugLog(config, eventName, message) {
     const file = path.join(config.dataDir, "debug.log");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.appendFileSync(file, `${new Date().toISOString()} [${eventName}] ${message}\n`, { mode: 0o600 });
+    // mode applies only when the file is created; enforce it on an existing one.
+    fs.chmodSync(file, 0o600);
   } catch { /* diagnostics must never break a hook */ }
 }
 
@@ -80,5 +82,9 @@ export async function runHook(eventName, handler) {
     if (result.systemMessage) payload.systemMessage = result.systemMessage;
     process.stdout.write(JSON.stringify(payload));
   }
-  process.exit(0);
+  // Set the code and let Node exit once stdout has drained. process.exit() does
+  // NOT drain a pipe, and pipes are asynchronous on macOS: a recall block larger
+  // than the pipe buffer would be cut in half, putting invalid JSON on the ABI.
+  // Nothing else holds the loop open here - stdin has ended and its timer is unref'd.
+  process.exitCode = 0;
 }

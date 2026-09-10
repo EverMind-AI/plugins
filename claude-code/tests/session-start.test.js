@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startFakeEveros } from "./helpers/fake-everos.js";
 import { runHookScript } from "./helpers/run-hook.js";
-import { markStored, statePath, readState } from "../hooks/scripts/lib/state.js";
+import { markStored, statePath, readState, touchSession } from "../hooks/scripts/lib/state.js";
 
 const SCRIPT = "hooks/scripts/session-start.js";
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-start-")); }
@@ -89,6 +89,48 @@ test("a session abandoned by a cancelled SessionEnd is sealed by the next one", 
     assert.equal(flushes[0].body.session_id, "old-session");
     assert.equal(flushes[0].body.project_id, "repo-that-is-not-this-one", "must seal the project the session ran in, not this one");
     assert.equal(readState(dir, "old-session").flushed, true);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a live session that is mid-turn is not sealed underneath it", async () => {
+  // The state file is only written when a turn is CAPTURED, so a long agentic
+  // turn writes nothing for many minutes. Recall touches the session on every
+  // prompt so that mtime tracks activity rather than captures.
+  const server = await startFakeEveros();
+  const dir = tmp();
+  try {
+    markStored(dir, "long-turn", "p1");
+    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
+    fs.utimesSync(statePath(dir, "long-turn"), twentyMinutesAgo, twentyMinutesAgo);
+    touchSession(dir, "long-turn", "proj"); // the user just sent another prompt
+
+    await runHookScript(SCRIPT, { session_id: "new-session", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    assert.equal(server.only("/api/v2/memory/flush").length, 0);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the whole sweep shares one budget so it cannot outrun the hook timeout", async () => {
+  // Five sessions x a 10s flush deadline, run one after another, would be 50s
+  // against a 15s hook timeout.
+  const server = await startFakeEveros({ flushDelayMs: 1500 });
+  const dir = tmp();
+  try {
+    const stale = new Date(Date.now() - 30 * 60 * 1000);
+    for (const id of ["s1", "s2", "s3", "s4", "s5"]) {
+      markStored(dir, id, "p1", "proj");
+      fs.utimesSync(statePath(dir, id), stale, stale);
+    }
+    const started = Date.now();
+    const { code } = await runHookScript(SCRIPT, { session_id: "new", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(code, 0);
+    assert.ok(elapsed < 14000, `sweep took ${elapsed}ms, must stay inside the 15s hook timeout`);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

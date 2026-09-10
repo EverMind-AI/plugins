@@ -64,14 +64,31 @@ function textOf(blocks) {
     .trim();
 }
 
-/** tool_result content is either a string or a list of text blocks. */
+/**
+ * tool_result content is a string, or a list of blocks that are usually text
+ * but not always: real transcripts also carry `tool_reference` and `image`
+ * blocks, and 206 results in this machine's history have no text block at all.
+ * Those become a typed placeholder rather than an empty row, so the trajectory
+ * still records that something came back.
+ */
 function toolResultText(block) {
   const raw = block?.content;
-  const text = typeof raw === "string"
-    ? raw
-    : Array.isArray(raw)
-      ? raw.map((b) => (typeof b === "string" ? b : b?.text ?? "")).join("\n").trim()
-      : "";
+  let text;
+  if (typeof raw === "string") {
+    text = raw;
+  } else if (Array.isArray(raw)) {
+    text = raw
+      .map((b) => {
+        if (typeof b === "string") return b;
+        if (typeof b?.text === "string" && b.text !== "") return b.text;
+        return b?.type ? `[${b.type}]` : "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  } else {
+    text = "";
+  }
   const flagged = block?.is_error ? `[tool error] ${text}` : text;
   return truncateMiddle(flagged, TOOL_RESULT_MAX_CHARS);
 }
@@ -178,6 +195,15 @@ function looksComplete(turn) {
  * turn may never get its closing entry, so after the last attempt we capture
  * whatever is there rather than dropping the turn.
  */
+/** The id of the last turn on disk, for a Stop that arrived without one. */
+export function lastPromptId(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const id = entries[i]?.promptId;
+    if (typeof id === "string" && id !== "" && entries[i]?.isSidechain !== true) return id;
+  }
+  return null;
+}
+
 export async function readTurn(filePath, promptId, options = {}) {
   const attempts = options.attempts ?? TRANSCRIPT_READ_ATTEMPTS;
   const delayMs = options.delayMs ?? TRANSCRIPT_READ_DELAY_MS;

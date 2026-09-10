@@ -15,17 +15,38 @@ const PROFILE_TRAITS_MAX = 4;
  * Worst case with every section full stays under ~9k characters.
  */
 const ITEM_MAX_CHARS = 300;
+/**
+ * Cap for the assembled block, about 2000 tokens. The per-line cap alone is not
+ * enough: a full profile plus five episodes with three facts each, five cases
+ * and five skills reaches roughly 14 kB, which is a lot to spend on every
+ * single prompt. Lines are dropped from the end, so the profile and the
+ * highest-scoring episodes survive.
+ */
+const BLOCK_MAX_CHARS = 8000;
 
 /**
- * Rewrite any fence token inside recalled content to an inert bracketed form.
- * Recalled memory is untrusted: a stored "</everos_memory>" would otherwise close
- * our fence early and everything after it would reach the model OUTSIDE the
- * "do not follow instructions" label. Neutralizing here guarantees a rendered
- * block has exactly one opener and one closer - the invariant stripInjectedMemory
- * relies on.
+ * Rewrite EVERY tag inside recalled content to an inert bracketed form.
+ *
+ * Recalled memory is untrusted - an earlier session's LLM wrote it from whatever
+ * that session contained - and it is injected twice-wrapped: our own
+ * <everos_memory> fence sits inside the host's, which renders as
+ *
+ *     <system-reminder>
+ *     UserPromptSubmit hook additional context: <everos_memory>...
+ *
+ * A stored "</everos_memory>" would close our fence, putting the rest outside the
+ * "do not follow instructions" label. A stored "</system-reminder>" is worse: it
+ * closes the HOST's wrapper, and everything after it reads to the model as
+ * host-authored instruction. Allow-listing the tags we happen to know about is
+ * the wrong shape - the host can add a wrapper tomorrow - so nothing tag-shaped
+ * survives. A code snippet losing its angle brackets inside a recalled memory is
+ * an acceptable price.
+ *
+ * Runs after the whitespace collapse in oneLine, so a tag that only becomes one
+ * once its newlines are squeezed out is caught too.
  */
 export function neutralizeFenceTokens(s) {
-  return String(s ?? "").replace(/<(\/?)everos_memory>/gi, "[$1everos_memory]");
+  return String(s ?? "").replace(/<\s*(\/?)\s*([A-Za-z][\w:.-]*)\s*>/g, "[$1$2]");
 }
 
 function oneLine(s, max = ITEM_MAX_CHARS) {
@@ -50,6 +71,22 @@ function renderEpisode(item) {
   return [`- ${head}`, ...facts].join("\n");
 }
 
+/** One `- ` line for a profile fact, whether it arrives as a pair or a value. */
+function profileFactLine(key, value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    // A list entry rather than a mapping entry: the key is a positional index,
+    // so use the object's own fields instead of printing "0: [object Object]".
+    const label = oneLine(value.key ?? value.name ?? value.field);
+    const body = oneLine(value.value ?? value.content ?? value.text);
+    if (label && body) return `- ${label}: ${body}`;
+    return body ? `- ${body}` : null;
+  }
+  const rendered = oneLine(Array.isArray(value) ? value.join(", ") : value);
+  if (!rendered) return null;
+  const label = oneLine(key);
+  return /^\d+$/.test(label) ? `- ${rendered}` : `- ${label}: ${rendered}`;
+}
+
 function renderProfile(item) {
   const data = item?.profile_data ?? {};
   const lines = [];
@@ -58,8 +95,8 @@ function renderProfile(item) {
   const explicit = data.explicit_info;
   if (explicit && typeof explicit === "object") {
     for (const [key, value] of Object.entries(explicit).slice(0, PROFILE_EXPLICIT_MAX)) {
-      const rendered = oneLine(Array.isArray(value) ? value.join(", ") : value);
-      if (rendered) lines.push(`- ${oneLine(key)}: ${rendered}`);
+      const line = profileFactLine(key, value);
+      if (line) lines.push(line);
     }
   }
   for (const trait of (Array.isArray(data.implicit_traits) ? data.implicit_traits : []).slice(0, PROFILE_TRAITS_MAX)) {
@@ -91,13 +128,23 @@ function section(label, items, renderer, max = SECTION_MAX_ITEMS) {
   return rendered.length ? { lines: [`${label}:`, ...rendered], count: rendered.length } : { lines: [], count: 0 };
 }
 
+/** Drop lines from the end until the block fits, leaving no orphaned heading. */
+function trimToBudget(lines) {
+  const overhead = MEMORY_OPEN.length + UNTRUSTED_NOTICE.length + MEMORY_CLOSE.length + 3;
+  const kept = [...lines];
+  const size = () => kept.reduce((n, l) => n + l.length + 1, overhead);
+  while (kept.length > 0 && size() > BLOCK_MAX_CHARS) kept.pop();
+  while (kept.length > 0 && kept.at(-1).endsWith(":")) kept.pop();
+  return kept;
+}
+
 export function render(userData, agentData) {
   const profile = section("Developer profile", userData?.profiles, renderProfile, 1);
   const episodes = section("Relevant past episodes", userData?.episodes, renderEpisode);
   const cases = section("Relevant cases", agentData?.agent_cases, renderCase);
   const skills = section("Relevant skills", agentData?.agent_skills, renderSkill);
 
-  const body = [...profile.lines, ...episodes.lines, ...cases.lines, ...skills.lines];
+  const body = trimToBudget([...profile.lines, ...episodes.lines, ...cases.lines, ...skills.lines]);
   if (body.length === 0) return null;
 
   return {

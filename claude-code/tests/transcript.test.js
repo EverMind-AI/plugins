@@ -98,6 +98,22 @@ test("an error result is flagged and its list content is flattened", () => {
   assert.equal(errorMessage.content, "[tool error] ruff: command not found");
 });
 
+test("a tool result with no text block still says what came back", () => {
+  // Real transcripts carry 1232 tool_reference and 16 image blocks, and 206
+  // tool_results whose content list holds no text at all. Mapping those to an
+  // empty string put 206 information-free rows into memory.
+  const line = [
+    JSON.stringify({ type: "user", isSidechain: false, promptId: "p", promptSource: "typed", timestamp: "2026-09-10T10:00:00.000Z", message: { role: "user", content: "go" } }),
+    JSON.stringify({ type: "assistant", isSidechain: false, requestId: "r", timestamp: "2026-09-10T10:00:01.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "NotebookEdit", input: {} }, { type: "tool_use", id: "t2", name: "Read", input: {} }] } }),
+    JSON.stringify({ type: "user", isSidechain: false, promptId: "p", toolUseResult: {}, timestamp: "2026-09-10T10:00:02.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] }] } }),
+    JSON.stringify({ type: "user", isSidechain: false, promptId: "p", toolUseResult: {}, timestamp: "2026-09-10T10:00:03.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", is_error: true, content: [{ type: "image", source: {} }] }] } }),
+  ].join("\n");
+  const tools = toEverosMessages(sliceTurn(parseTranscript(line), "p"), IDS).filter((m) => m.role === "tool");
+  assert.equal(tools.length, 2);
+  assert.equal(tools[0].content, "[tool_reference]");
+  assert.equal(tools[1].content, "[tool error] [image]");
+});
+
 test("an orphan tool result is dropped because EverOS rejects it", () => {
   assert.equal(messages().some((m) => m.tool_call_id === "toolu_missing"), false);
   assert.equal(messages().some((m) => m.content.includes("orphan result")), false);

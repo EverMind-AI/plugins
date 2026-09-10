@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runHook } from "./lib/hook-io.js";
-import { resolveIdentity } from "./lib/identity.js";
+import { resolveIdentity, sanitizeId } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { markFlushed, pruneState } from "./lib/state.js";
 import { FLUSH_DEADLINE_MS } from "./lib/constants.js";
@@ -19,7 +19,7 @@ runHook("SessionEnd", async (input, ctx) => {
   const identity = resolveIdentity(input.cwd ?? process.cwd(), config);
   try {
     const data = await createClient({ baseUrl: config.baseUrl }).flush(
-      { session_id: sessionId, app_id: identity.appId, project_id: identity.projectId },
+      { session_id: sanitizeId(sessionId, "unknown"), app_id: identity.appId, project_id: identity.projectId },
       deadline(FLUSH_DEADLINE_MS),
     );
     markFlushed(config.dataDir, sessionId);
