@@ -5,6 +5,7 @@ import { ensureEveros } from "./lib/provision.js";
 import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { markFlushed, pendingFlushes } from "./lib/state.js";
+import { isLoopback } from "./lib/config.js";
 
 /**
  * How long a session must sit untouched before another session may seal it.
@@ -102,6 +103,12 @@ runHook("SessionStart", async (input, ctx) => {
 
   switch (outcome.status) {
     case "healthy":
+      // Everything typed and every tool result goes to base_url, and EverOS has
+      // no authentication of its own. If that address is not this machine, the
+      // user should be told which machine it is - once, at the top of the session.
+      if (!isLoopback(config.baseUrl)) {
+        return { systemMessage: `⚠️ EverOS is remote: this session's transcript is being sent to ${config.baseUrl}, unauthenticated.` };
+      }
       return config.verbose ? { systemMessage: `🧠 EverOS ready (${outcome.health?.version ?? "unknown version"})` } : undefined;
     case "started":
       return { systemMessage: "⚡ EverOS started — memory is on." };

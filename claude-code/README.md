@@ -234,7 +234,8 @@ and tool calls with their results.
 **Tool results are part of that.** If a command prints a secret, that secret
 reaches EverOS. EverOS has no authentication of its own, so keep `base_url` on
 loopback unless you have secured it yourself. The plugin never starts a server
-for a non-loopback address.
+for a non-loopback address, and if `base_url` points at another machine it says
+so once per session, naming the host.
 
 ## Development
 

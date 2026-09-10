@@ -147,6 +147,22 @@ test("a session that is merely idle in another window is left alone", async () =
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a reachable non-loopback EverOS says so, once, naming the host", async () => {
+  // The whole transcript goes to base_url and EverOS has no authentication of
+  // its own, so a value that is not loopback is worth one line per session.
+  const server = await startFakeEveros();
+  const dir = tmp();
+  const asLocalhostAlias = server.baseUrl.replace("127.0.0.1", "localhost.");
+  try {
+    const { code, json } = await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: asLocalhostAlias, EVEROS_CC_DATA_DIR: dir, EVEROS_CC_USER_ID: "tester",
+    });
+    assert.equal(code, 0);
+    assert.ok(json.systemMessage.includes("localhost."), json.systemMessage);
+    assert.ok(/transcript|sent/i.test(json.systemMessage), json.systemMessage);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a non-loopback address is reported unreachable, never started", async () => {
   const dir = tmp();
   try {
