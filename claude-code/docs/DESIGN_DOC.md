@@ -65,7 +65,7 @@ install documentation is written for the checkout case first.
 | D10 | Seal points | `SessionEnd` and `PreCompact`; no periodic flush | Periodic flush would fight EverOS's own topic-boundary detection. Compaction is a natural boundary. |
 | D11 | Turn dedupe | `prompt_id` from hook stdin, state under `${CLAUDE_PLUGIN_DATA}` | `Stop` can fire twice for one prompt (interrupt, resume). EverOS's buffer does not dedupe. |
 | D13 | Cold first recall | SessionStart fires one throwaway search to warm the path | The session's first prompt is where memory matters most and where the cold cost landed. This hook has a 15 s budget and nobody waiting on it. |
-| D14 | Unsealed sessions | A later session seals any session untouched for 10 minutes, under the project id it ran in | Claude Code cancels `SessionEnd` when the host exits in a hurry, routine under `claude -p`, stranding the turns after the last topic boundary. Self-healing beats a guarantee we cannot make. |
+| D14 | Unsealed sessions | A later session seals any session untouched for 30 minutes, under the project id it ran in; the whole sweep shares one 6 s budget | Claude Code cancels `SessionEnd` when the host exits in a hurry, routine under `claude -p`, stranding the turns after the last topic boundary. Self-healing beats a guarantee we cannot make. |
 | D15 | Case rendering | Inject `task_intent` + `key_insight`, not `approach`; cap every rendered line at 300 chars | A real case's `approach` is a numbered walkthrough over 1500 characters. At prompt time the distilled lesson helps; `/everos:search` is where the detail belongs. |
 | D12 | Prompt-injection story | Port OpenClaw `render` verbatim | Fenced `<everos_memory>` block, "untrusted historical data" label, fence-token neutralisation, position-0 strip before capture. Do not reinvent. |
 
@@ -223,7 +223,7 @@ sequenceDiagram
    the path, so the session's first prompt is not the one that pays the cold
    cost. Failure is not reported; whether memory works is what the recall hook
    will say.
-6. Seal any session left untouched for 10 minutes and never flushed, using the
+6. Seal any session left untouched for 30 minutes and never flushed, using the
    `project_id` recorded with that session rather than this one's — the
    abandoned session may have run in a different repository. At most 5 per
    start, and the sweep stops at the first error rather than hammering a sick
@@ -328,7 +328,7 @@ unset and never shadow a lower layer.
 | `EVEROS_CC_START_CMD` | — | `everos server start` | Quote-aware argv split; e.g. `uv run everos server start` |
 | `EVEROS_CC_USER_ID` | — | OS user | user track identity |
 | `EVEROS_CC_PROJECT_ID` | — | derived (§5) | force one project id (e.g. for global memory) |
-| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | recall budget, clamped to 500-9000; a nonsense value falls back rather than disabling recall |
+| `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | recall budget, clamped to 500-7000 because resolving the project id spends up to 2 s of the hook's 10 s first; a nonsense value falls back rather than disabling recall |
 | `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`, else `~/.everos/.claude-code` | per-session state, `debug.log`, `everos-server.log` |
 | `EVEROS_CC_VERBOSE` | — | `0` | also print recall-miss / save lines |
 | `EVEROS_CC_DEBUG` | — | `0` | write diagnostics to `${CLAUDE_PLUGIN_DATA}/debug.log` |
@@ -337,10 +337,12 @@ Only `base_url` and `everos_dir` are declared in `plugin.json` `userConfig`,
 so enabling the plugin asks two questions, both answerable with Enter.
 
 Non-configurable constants: `APP_ID = "claude-code"`, `AGENT_ID =
-"claude-code"`, health probe 2 s, start wait 5 s, recall deadline 5 s (configurable), warm-up 5 s, abandoned-session threshold
-10 min, 5
-items per rendered section, id clip 128, `/add` batch 500, tool-result guard
-20 000 chars, query clip 500 chars.
+"claude-code"`, health probe 2 s, start wait 5 s, warm-up 5 s, capture 20 s,
+flush 10 s, sweep budget 6 s, abandoned-session threshold 30 min, transcript
+read 10 x 200 ms, 5 items per rendered section, 3 atomic facts per episode,
+300 chars per rendered line, 8000 chars per block, id clip 128, `/add` batch
+500, tool-result guard 20 000 chars, query clip 500 chars, 200 remembered
+prompt ids, 30-day state TTL.
 
 ## 9. Failure policy
 
@@ -349,8 +351,8 @@ items per rendered section, id clip 128, `/add` batch 500, tool-result guard
   ABI and carries only the documented JSON.
 - Network errors, non-2xx, non-JSON bodies ⇒ swallowed per call. Recall
   tracks fail independently.
-- Deadlines are enforced inside the script (5 s recall, 20 s capture,
-  10 s flush) and are always shorter than the `hooks.json` timeout so the
+- Deadlines are enforced inside the script (5 s recall, 20 s capture, 10 s
+  flush, 5 s warm-up, 6 s for the whole abandoned-session sweep) and are always shorter than the `hooks.json` timeout so the
   host never kills us mid-write.
 - No retries in v1. Rationale (OpenClaw handoff): a 5xx on `/add` may have
   committed; re-sending double-writes.
