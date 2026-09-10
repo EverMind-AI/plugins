@@ -11,10 +11,12 @@ brief, where the code lives, how to test it, and how to cut the next release._
 
 ## 1. Status snapshot
 
-- **Shipped and published.** `@evermind-ai/openclaw-plugin` is live on npm
-  (published **3.0.2**); source lives in the `EverMind-AI/plugins` monorepo under
-  `openclaw/`. The **3.0.3 candidate has 144 tests** (3 live), plus an exact
-  OpenClaw 2026.8.1 SDK typecheck, green on `npm run ci`. The older release was verified
+- **Shipped; moving to a new npm scope.** The plugin is live on npm as
+  `@evermind-ai/openclaw-plugin` (published **3.0.2**). It is being renamed to
+  `@everos-ai/openclaw-plugin`, whose first publish is still pending. Source
+  lives in the `EverMind-AI/plugins` monorepo under `openclaw/`. The **3.0.3
+  candidate has 144 tests** (3 live), plus an exact OpenClaw 2026.8.1 SDK
+  typecheck, green on `npm run ci`. The older release was verified
   end-to-end against a real EverOS through two full wipe/reinstall passes
   (fresh-download Tier-1, wipe-and-rebuild Tier-2).
 - **The design doc is the intent; this is the as-built.** The shipped code went
@@ -125,7 +127,7 @@ warning is logged) · agent track = constant `agent_id` (default `"openclaw"`) �
 EverMind-AI/plugins                     the monorepo
 ├── README.md                           root index (plugin → host → install → status)
 ├── LICENSE                             Apache-2.0
-└── openclaw/                           ← this plugin — published to npm as @evermind-ai/openclaw-plugin
+└── openclaw/                           ← this plugin — published to npm as @everos-ai/openclaw-plugin
     ├── openclaw.plugin.json            manifest: id evermind-ai-everos, kind:"memory", 7-key configSchema
     ├── package.json                    npm metadata; bin everos-setup; files=[dist, manifest, README, README_zh]
     ├── src/                            index · register · handlers · everos · config · provision · setup · setup-cli · types (+ openclaw-types · openclaw-sdk.d.ts SDK shims)
@@ -134,7 +136,8 @@ EverMind-AI/plugins                     the monorepo
     └── dist/                           compiled output (published; git-ignored)
 ```
 
-- **Published:** npm `@evermind-ai/openclaw-plugin` @ **3.0.2** (public scoped).
+- **Published:** npm `@evermind-ai/openclaw-plugin` @ **3.0.2** (public scoped),
+  superseded by `@everos-ai/openclaw-plugin` — first publish pending.
 - **Design docs** (this folder, `everos plugin claw/`): `everos openclaw
   plugin.md` (+ simplified + `插件` zh + `插件 简化版` zh) — the design spec this
   document bridges from.
@@ -239,10 +242,16 @@ For the 3.0.3 candidate and later releases:
 2. **Bump the version in all three places, in lockstep:** `package.json`,
    `openclaw.plugin.json`, and the README prose. (They drifted at 3.0.2 — don't
    inherit that.)
-3. **Publish:** `npm login` as `kevinchen77`, then `npm publish` **from your own
-   terminal** — npm's publish now requires a browser auth step a headless shell
-   can't complete. `prepublishOnly` cleans and rebuilds `dist/` first. Verify:
-   `npm view @evermind-ai/openclaw-plugin version repository`.
+3. **Publish:** `npm login` as an account with publish rights on the
+   `@everos-ai` scope, then `npm publish`. `npm login` defaults to a browser
+   flow (`auth-type=web`); `npm publish` itself is headless-friendly and takes
+   `--otp <code>` when 2FA is on. `prepublishOnly` cleans and rebuilds `dist/`
+   first. Verify: `npm view @everos-ai/openclaw-plugin version repository`.
+   Once the first version is up, prefer trusted publishing: register this repo
+   and the publishing workflow under the package's Trusted Publisher settings
+   on npmjs.com, give the job `id-token: write`, and CI publishes with no token
+   and no OTP. Trusted publishing cannot perform the *first* publish of a name
+   that does not exist yet (npm/cli#8544), so that one is manual.
 4. **Source lands via PR** to `EverMind-AI/plugins` (squash to one commit, house
    style). `files[]` ships only `dist`, the manifest, and both READMEs — no
    tests, no `CHANGELOG` (the changelog lives with the design docs, not the
@@ -250,6 +259,6 @@ For the 3.0.3 candidate and later releases:
 5. **README duties:** keep current *what data leaves the device* (the `/add`
    payload → EverOS's configured LLM/embedding providers, cloud by default
    unless EverOS points at local models), the one-command install
-   (`npx --yes --package @evermind-ai/openclaw-plugin everos-setup`), the
+   (`npx --yes --package @everos-ai/openclaw-plugin everos-setup`), the
    consent-grant step, and the one-time EverOS setup (`everos init` + keys in
    `~/.everos/everos.toml`).

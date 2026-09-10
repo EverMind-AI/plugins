@@ -11,10 +11,11 @@ _2026-08-31 更新。写给接手维护的人。npm 已发布版仍为 3.0.2；
 
 ## 1. 现状快照
 
-- **已发布、已上线。** `@evermind-ai/openclaw-plugin` 已在 npm 上线
-  （最新 **3.0.2**）；源码在 monorepo `EverMind-AI/plugins` 的 `openclaw/`
-  子目录。**3.0.3 候选版有 144 个测试**（3 个 live），并对真实
-  OpenClaw 2026.8.1 SDK 执行类型检查，`npm run ci` 全绿。旧发布版已对着真实 EverOS
+- **已上线，正在迁移 npm scope。** 插件目前在 npm 上的名字是
+  `@evermind-ai/openclaw-plugin`（最新 **3.0.2**），正改名为
+  `@everos-ai/openclaw-plugin`，新名尚未首发。源码在 monorepo
+  `EverMind-AI/plugins` 的 `openclaw/` 子目录。**3.0.3 候选版有 144 个测试**
+  （3 个 live），并对真实 OpenClaw 2026.8.1 SDK 执行类型检查，`npm run ci` 全绿。旧发布版已对着真实 EverOS
   端到端跑通两轮全量抹除重装（全新下载 Tier-1、抹除重建 Tier-2）。
 - **设计文档是意图，本文是实建。** 上线代码超出了
   `everos openclaw plugin.md §3.5` 里最初的四 hook 草图：加了 `before_reset`
@@ -111,7 +112,7 @@ OS 账户；没有则 user track 关闭并记一条警告）· agent track = 常
 EverMind-AI/plugins                     monorepo
 ├── README.md                           根索引（plugin → host → install → status）
 ├── LICENSE                             Apache-2.0
-└── openclaw/                           ← 本插件 —— 以 @evermind-ai/openclaw-plugin 发布到 npm
+└── openclaw/                           ← 本插件 —— 以 @everos-ai/openclaw-plugin 发布到 npm
     ├── openclaw.plugin.json            manifest：id evermind-ai-everos、kind:"memory"、7 键 configSchema
     ├── package.json                    npm 元数据；bin everos-setup；files=[dist, manifest, README, README_zh]
     ├── src/                            index · register · handlers · everos · config · provision · setup · setup-cli · types（+ openclaw-types · openclaw-sdk.d.ts SDK 类型垫片）
@@ -120,7 +121,8 @@ EverMind-AI/plugins                     monorepo
     └── dist/                           编译产物（发布；git-ignore）
 ```
 
-- **已发布：** npm `@evermind-ai/openclaw-plugin` @ **3.0.2**（public scoped）。
+- **已发布：** npm `@evermind-ai/openclaw-plugin` @ **3.0.2**（public scoped），
+  由 `@everos-ai/openclaw-plugin` 取代 —— 新名尚未首发。
 - **设计文档**（本目录 `everos plugin claw/`）：`everos openclaw plugin.md`
   （+ simplified + `插件` 中文 + `插件 简化版` 中文）—— 本文档所桥接的设计规格。
 - **EverOS 服务本体：**
@@ -208,14 +210,18 @@ Claude-CLI 的项目记忆和 OpenClaw 自身的会话连续性遮住了一个�
    别在红的用例上发版。
 2. **三处版本同步递增：** `package.json`、`openclaw.plugin.json`、以及 README
    文案。（3.0.2 时它们漂了 —— 别把这个继承下去。）
-3. **发布：** `npm login` 成 `kevinchen77`，然后**在你自己的终端里** `npm
-   publish` —— npm 的 publish 现在需要一步浏览器认证，无头 shell 完成不了。
-   `prepublishOnly` 会先清理并重建 `dist/`。核验：
-   `npm view @evermind-ai/openclaw-plugin version repository`。
+3. **发布：** `npm login` 成一个在 `@everos-ai` scope 上有发布权限的账号，然后
+   `npm publish`。`npm login` 默认走浏览器（`auth-type=web`）；`npm publish`
+   本身可无头执行，开了 2FA 就带 `--otp <code>`。`prepublishOnly` 会先清理并
+   重建 `dist/`。核验：`npm view @everos-ai/openclaw-plugin version repository`。
+   首个版本上线后建议改用 trusted publishing：在 npmjs.com 该包的 Trusted
+   Publisher 设置里登记本仓库和发布 workflow，给该 job 加 `id-token: write`，
+   之后 CI 发布无需 token 也无需 OTP。注意 trusted publishing 无法完成一个
+   尚不存在的包名的**首次**发布（npm/cli#8544），首发只能手动。
 4. **源码经 PR 合入** `EverMind-AI/plugins`（压成一个 commit，家规）。`files[]`
    只发 `dist`、manifest、两个 README —— 不发测试、不发 `CHANGELOG`（changelog
    跟设计文档放一起，不进包）。
 5. **README 义务：** 保持最新的*到底哪些数据离开设备*（`/add` 载荷 → EverOS
    配置的 LLM/embedding 服务，默认云端，除非 EverOS 指向本地模型）、一键安装
-   （`npx --yes --package @evermind-ai/openclaw-plugin everos-setup`）、同意授权
+   （`npx --yes --package @everos-ai/openclaw-plugin everos-setup`）、同意授权
    步骤、以及一次性 EverOS 设置（`everos init` + 密钥填 `~/.everos/everos.toml`）。

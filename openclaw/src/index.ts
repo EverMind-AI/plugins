@@ -1,5 +1,5 @@
 /**
- * @evermind-ai/openclaw-plugin — OpenClaw Memory — EverOS.
+ * @everos-ai/openclaw-plugin — OpenClaw Memory — EverOS.
  *
  * OpenClaw plugin entry: claims the exclusive `memory` slot and wires the
  * media/lifecycle hooks to EverOS (staged attachments on `message_received`,
