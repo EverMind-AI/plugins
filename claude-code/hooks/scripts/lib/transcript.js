@@ -168,7 +168,14 @@ export function toEverosMessages(entries, { userId, agentId }) {
     // attachment / system / queue-operation / file-history / ai-title: not conversation.
   }
 
-  // EverOS 5xxs a tool row whose tool_call_id matches no preceding tool_calls entry.
+  // Drop a tool result whose call is not in this turn: it is an answer with no
+  // question, and everalgo would get a ToolCallResult whose request it never saw.
+  //
+  // NOT an EverOS requirement - verified against a live 1.3.1: an orphan row with
+  // a non-null tool_call_id is accepted and extracts fine. What EverOS actually
+  // rejects is role="tool" with NO tool_call_id (_boundary.py:354 raises
+  // ValueError, surfacing as a 500), and the filter above already makes that
+  // unrepresentable. Across 3407 real turns this drops 26 of 26081 tool rows.
   const known = new Set();
   const kept = [];
   for (const message of messages) {

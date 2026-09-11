@@ -119,6 +119,20 @@ test("an orphan tool result is dropped because EverOS rejects it", () => {
   assert.equal(messages().some((m) => m.content.includes("orphan result")), false);
 });
 
+test("a tool result never reaches EverOS without a tool_call_id", () => {
+  // This is the shape EverOS actually rejects: _boundary.py raises
+  // ValueError for role="tool" with no tool_call_id, surfacing as a 500.
+  // Verified against a live 1.3.1; an orphan with a non-null id is accepted.
+  const line = [
+    JSON.stringify({ type: "user", isSidechain: false, promptId: "p", promptSource: "typed", timestamp: "2026-09-10T10:00:00.000Z", message: { role: "user", content: "go" } }),
+    JSON.stringify({ type: "user", isSidechain: false, promptId: "p", toolUseResult: {}, timestamp: "2026-09-10T10:00:01.000Z", message: { role: "user", content: [{ type: "tool_result", content: "no id at all" }] } }),
+    JSON.stringify({ type: "assistant", isSidechain: false, requestId: "r", timestamp: "2026-09-10T10:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "done" }] } }),
+  ].join("\n");
+  const messages = toEverosMessages(sliceTurn(parseTranscript(line), "p"), IDS);
+  assert.equal(messages.every((m) => m.role !== "tool" || typeof m.tool_call_id === "string"), true);
+  assert.equal(messages.some((m) => m.content.includes("no id at all")), false);
+});
+
 test("every message carries a positive integer millisecond timestamp in order", () => {
   const ts = messages().map((m) => m.timestamp);
   assert.equal(ts.every((t) => Number.isInteger(t) && t > 0), true);

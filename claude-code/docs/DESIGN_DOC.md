@@ -64,7 +64,7 @@ install documentation is written for the checkout case first.
 | D9 | User-visible output | Recall hit line when hits > 0; warning line when EverOS is down; nothing on Stop | Shows value without a line per turn. Silent memory loss is the failure mode the OpenClaw handoff warns about most. |
 | D10 | Seal points | `SessionEnd` and `PreCompact`; no periodic flush | Periodic flush would fight EverOS's own topic-boundary detection. Compaction is a natural boundary. |
 | D11 | Turn dedupe | `prompt_id` from hook stdin, state under `${CLAUDE_PLUGIN_DATA}` | `Stop` can fire twice for one prompt (interrupt, resume). EverOS's buffer does not dedupe. |
-| D13 | Cold first recall | SessionStart fires one throwaway search to warm the path | The session's first prompt is where memory matters most and where the cold cost landed. This hook has a 15 s budget and nobody waiting on it. |
+| D13 | Cold first recall | **Tried a SessionStart warm-up search, then removed it** | Two of the first three live sessions lost their opening recall, and a warm-up was added at the same time as the budget rise — two changes, one outcome, no attribution. Measured afterwards on a server that had never served a search: first 2.2 s, steady state 0.4-0.9 s. A 1.5 s saving that the 5 s budget already absorbs does not pay for a per-session embedding call and up to 5 s of SessionStart. D8 is what fixed it. |
 | D14 | Unsealed sessions | A later session seals any session untouched for 30 minutes, under the project id it ran in; the whole sweep shares one 6 s budget | Claude Code cancels `SessionEnd` when the host exits in a hurry, routine under `claude -p`, stranding the turns after the last topic boundary. Self-healing beats a guarantee we cannot make. |
 | D15 | Case rendering | Inject `task_intent` + `key_insight`, not `approach`; cap every rendered line at 300 chars | A real case's `approach` is a numbered walkthrough over 1500 characters. At prompt time the distilled lesson helps; `/everos:search` is where the detail belongs. |
 | D12 | Prompt-injection story | Port OpenClaw `render` verbatim | Fenced `<everos_memory>` block, "untrusted historical data" label, fence-token neutralisation, position-0 strip before capture. Do not reinvent. |
@@ -168,6 +168,16 @@ namespace. Two `api` repositories from different owners are ordinary, and
 under a bare name they would share one partition — each reading the other's
 decisions into its prompts, and a hostile clone able to write into yours.
 
+**The profile ignores this partitioning.** `recall/profile.py` fetches by
+`owner_id` alone, so EverOS returns the user's profile whatever `app_id` and
+`project_id` the search carries, and the row reports the scope it was written
+under rather than the one requested (verified against a live 1.3.1: one profile
+came back under three unrelated scopes). Episodes, cases and skills are
+per-project; the profile is per-user across every project and every host on that
+EverOS. Left as-is because a person plausibly has one profile, but it means
+`include_profile: true` on the user track is a cross-project read, and the
+README says so.
+
 On-disk result: `<root>/claude-code/<project_id>/users/<user_id>/` and
 `<root>/claude-code/<project_id>/agents/claude-code/`.
 
@@ -219,18 +229,14 @@ sequenceDiagram
    memory resumes when it is up` / `⚠️ EverOS unreachable at <base_url>; run
    /everos:status`. Never blocks the session.
 
-5. Once the server answers, run one throwaway `/search` (5 s budget) to warm
-   the path, so the session's first prompt is not the one that pays the cold
-   cost. Failure is not reported; whether memory works is what the recall hook
-   will say.
-6. Seal any session left untouched for 30 minutes and never flushed, using the
+5. Seal any session left untouched for 30 minutes and never flushed, using the
    `project_id` recorded with that session rather than this one's — the
    abandoned session may have run in a different repository. At most 5 per
    start, and the sweep stops at the first error rather than hammering a sick
    server.
 
 Budget arithmetic against the 15 s hook timeout: health 2 s + start wait 5 s +
-warm-up 5 s leaves 3 s of margin.
+sweep 6 s leaves 2 s of margin.
 
 Not loopback ⇒ never spawn; report unreachable only. A second window
 spawning concurrently is rejected by EverOS's OME lock and exits; the first
@@ -338,7 +344,7 @@ Only `base_url` and `everos_dir` are declared in `plugin.json` `userConfig`,
 so enabling the plugin asks two questions, both answerable with Enter.
 
 Non-configurable constants: `APP_ID = "claude-code"`, `AGENT_ID =
-"claude-code"`, health probe 2 s, start wait 5 s, warm-up 5 s, capture 20 s,
+"claude-code"`, health probe 2 s, start wait 5 s, capture 20 s,
 flush 10 s, sweep budget 6 s, abandoned-session threshold 30 min, transcript
 read 10 x 200 ms, 5 items per rendered section, 3 atomic facts per episode,
 300 chars per rendered line, 8000 chars per block, id clip 128, `/add` batch
@@ -353,7 +359,7 @@ prompt ids, 30-day state TTL.
 - Network errors, non-2xx, non-JSON bodies ⇒ swallowed per call. Recall
   tracks fail independently.
 - Deadlines are enforced inside the script (5 s recall, 20 s capture, 10 s
-  flush, 5 s warm-up, 6 s for the whole abandoned-session sweep) and are always shorter than the `hooks.json` timeout so the
+  flush, 6 s for the whole abandoned-session sweep) and are always shorter than the `hooks.json` timeout so the
   host never kills us mid-write.
 - No retries in v1. Rationale (OpenClaw handoff): a 5xx on `/add` may have
   committed; re-sending double-writes.

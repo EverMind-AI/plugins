@@ -17,7 +17,8 @@ Good to know:
   else.
 - **Zero runtime dependencies** — native `fetch`, no npm install.
 - Memory is **partitioned per repository**, and every worktree of a repository
-  shares one partition.
+  shares one partition. The one exception is the developer profile, which EverOS
+  keys by user alone; see [How memory is partitioned](#how-memory-is-partitioned).
 
 ## Requirements
 
@@ -136,6 +137,16 @@ repository — ssh, https, with or without `.git` — resolves to the same id.
 Host and owner are part of it because a bare repository name is not a
 namespace: two `api` repositories from different owners are ordinary, and
 under a bare name they would read each other's decisions.
+
+**One exception, and it is EverOS's, not the plugin's.** The developer profile
+is keyed by `user_id` alone: EverOS returns it whatever `app_id` and
+`project_id` the search asks for, and the returned row reports the scope it was
+*written* under rather than the one requested. Verified against a live 1.3.1.
+So episodes, cases and skills are partitioned per repository; the profile is
+shared across all of your repositories and across every host that writes to the
+same EverOS. That is useful for "prefers terse answers" and awkward for
+anything the profile synthesised from one specific project. Set
+`EVEROS_CC_USER_ID` to different values per repository if you need them apart.
 
 On disk:
 

@@ -22,37 +22,6 @@ const SWEEP_MAX_SESSIONS = 5;
  */
 const SWEEP_BUDGET_MS = 6000;
 
-// Budget arithmetic against the 15s SessionStart timeout in hooks.json:
-// health probe 2s + start wait 5s + this 5s still leaves 3s of margin.
-const WARMUP_DEADLINE_MS = 5000;
-
-/**
- * Pay the cold-search cost here instead of on the user's first prompt.
- *
- * The first search of a session was the one that timed out in two of the first
- * three live runs - exactly the prompt where memory matters most. This hook has
- * a 15s budget and nobody waiting on its answer, so it absorbs that cost. One
- * track is enough to warm the shared path; failure is not worth reporting,
- * because whether memory works is what the recall hook will say.
- */
-async function warmUp(config, cwd, debug) {
-  const identity = resolveIdentity(cwd, config);
-  if (!identity.userId) return;
-  try {
-    await createClient({ baseUrl: config.baseUrl }).search(
-      {
-        app_id: identity.appId,
-        project_id: identity.projectId,
-        user_id: identity.userId,
-        query: "warm up",
-      },
-      deadline(WARMUP_DEADLINE_MS),
-    );
-    debug("search path warmed");
-  } catch (error) {
-    debug(`warm-up skipped: ${error.message}`);
-  }
-}
 
 /**
  * Seal the tail of sessions whose own SessionEnd never ran.
@@ -107,9 +76,7 @@ runHook("SessionStart", async (input, ctx) => {
   const warnOnce = (message) => (claimWarning(config.dataDir, sessionId) ? { systemMessage: message } : undefined);
 
   if (outcome.status === "healthy" || outcome.status === "started") {
-    const cwd = input.cwd ?? process.cwd();
-    await warmUp(config, cwd, debug);
-    await sweepAbandoned(config, cwd, debug);
+    await sweepAbandoned(config, input.cwd ?? process.cwd(), debug);
   }
 
   switch (outcome.status) {
