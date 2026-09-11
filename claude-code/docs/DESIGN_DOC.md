@@ -57,7 +57,7 @@ install documentation is written for the checkout case first.
 | D2 | Runtime | Node ≥ 20, zero runtime dependencies (native `fetch`) | Hooks are shell commands; a Python hook would have to pick an interpreter on machines we do not control. All three existing Claude Code memory plugins are Node. |
 | D3 | Interaction model | Hooks do everything; two user-invocable skills (`status`, `search`) | Automatic recall/capture is the value; `status` is a troubleshooting necessity; `search` is an explicit-recall fallback. |
 | D4 | What is captured | Full trajectory: user text, assistant text, `tool_calls`, tool results | everalgo's case extraction skips trajectories with fewer than 3 tool-call rounds and does its own head+tail truncation of tool output. Sending less would mean no agent memory at all. |
-| D5 | Partitioning | Per project: `project_id` = repository name | Mirrors OpenClaw (`workspaceDir` basename). All worktrees of one repository share memory (see §5). |
+| D5 | Partitioning | Per project: `project_id` = host, owner and repository name | Same intent as OpenClaw's `workspaceDir` basename, but derived from the git remote so all worktrees of one repository share memory, and carrying host and owner so two repositories with the same name do not (see §5). |
 | D6 | Auto-start | Detect, then spawn a detached `everos server start`; wait up to 5 s | Accepted trade-off: the spawned server is an orphan process that outlives the hook and the Claude Code session. EverOS's OME single-instance lock makes concurrent spawns from several windows harmless. |
 | D7 | Configuration | `EVEROS_CC_*` env > Claude Code `userConfig` > defaults; no plugin-owned file | `userConfig` is the host-native slot (Claude Code prompts on enable, stores in `~/.claude/settings.json`, exports `CLAUDE_PLUGIN_OPTION_*` to hooks). Same precedence as OpenClaw's `plugins.entries.<id>.config`. |
 | D8 | Recall latency | 5 s shared deadline for both searches, `EVEROS_CC_RECALL_TIMEOUT_MS` to change it; hook timeout 10 s | Planned at 3 s to protect typing latency, **raised after live runs**: two of the first three real sessions lost their opening recall to that budget. A warm search is 0.3-0.8 s so the budget is almost never spent, and a recall that times out costs the whole feature for that turn while a slow one costs a moment. |
@@ -190,7 +190,7 @@ sequenceDiagram
 
     U->>CC: prompt
     CC->>H: UserPromptSubmit {prompt, prompt_id}
-    par 3 s shared deadline
+    par 5 s shared deadline
         H->>E: POST /search {user_id, include_profile}
         H->>E: POST /search {agent_id}
     end
@@ -248,7 +248,8 @@ instance serves both.
 3. Two parallel `POST /search`, one per track, each with its own `.catch`:
    user track `{user_id, app_id, project_id, query, include_profile: true}`;
    agent track `{agent_id, app_id, project_id, query}`. `top_k`, `method`,
-   `radius` are not sent — EverOS defaults own them. Shared 3 s deadline.
+   `radius` are not sent — EverOS defaults own them. Shared 5 s deadline,
+   `EVEROS_CC_RECALL_TIMEOUT_MS` to change it.
 4. Render (`lib/render.js`, ported from OpenClaw): sections *Developer
    profile / Relevant past episodes / Relevant cases / Relevant skills*, at
    most 5 items each, one `- ` line per item, fence tokens neutralised,
@@ -405,7 +406,7 @@ All three must hold; verify by backend receipts, not by chat impressions
 3. **Fail-open.** With EverOS stopped: every hook exits 0, one warning line
    appears at SessionStart and none afterwards, prompt-to-first-token latency
    is not measurably changed (recall aborts at connect failure, well under the
-   3 s deadline).
+   5 s deadline).
 
 ## 13. Distribution
 
@@ -415,8 +416,14 @@ claude plugin install everos@everos --scope user
 ```
 
 `Plugins/.claude-plugin/marketplace.json` names the marketplace `everos` and
-lists `./claude-code` as plugin `everos`. Version lives in `plugin.json`;
-bumping it triggers updates. The repository README table gains a Claude Code
+lists `./claude-code` as plugin `everos`. Bumping `plugin.json`'s version is
+what triggers an update for installed users.
+
+**The version appears in both manifests and nothing keeps them in step.** The
+marketplace entry is what a user browsing the marketplace sees; `plugin.json`
+is what the installed copy reports. Releasing means editing both, and the
+sibling plugins have the same duplication. If this plugin ever gets a release
+script, keeping the two in step is its first job. The repository README table gains a Claude Code
 row; `README_zh.md` mirrors it.
 
 ## 14. Out of scope

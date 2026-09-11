@@ -55,3 +55,23 @@ jobs:
           '
       - name: Run tests
         run: npm test
+
+  validate:
+    name: Plugin manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.22.3"
+      - name: Install the Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate the plugin and the marketplace
+        run: |
+          claude plugin validate ./claude-code --strict
+          claude plugin validate ./.claude-plugin/marketplace.json --strict
